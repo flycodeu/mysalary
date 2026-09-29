@@ -38,6 +38,9 @@ try {
     } else {
         New-Item -ItemType Directory -Path $releaseDir -Force | Out-Null
     }
+    # The installer is built before cleanup, so rebuild it after disposable root artifacts are removed.
+    & (Join-Path $PSScriptRoot 'windows-installer.ps1') -SkipBuild
+    if ($LASTEXITCODE -ne 0) { throw 'Windows installer packaging failed.' }
     $apkOut = Join-Path $releaseDir "salary-$version-debug.apk"
     Copy-Item -LiteralPath $apk -Destination $apkOut -Force
     $zipOut = Join-Path $releaseDir "salary-$version-windows.zip"
