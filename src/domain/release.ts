@@ -5,6 +5,9 @@ export type UpdateResult =
   | { state: "unpublished" | "current" }
   | { state: "available"; version: string; url: string; download: boolean; notes: string };
 
+export const updateArtifactName = (version: string, platform: UpdatePlatform) =>
+  `salary-${version}-${platform === "windows" ? "windows-setup.exe" : "debug.apk"}`;
+
 function versionParts(version: string): number[] {
   if (!/^\d{1,6}\.\d{1,6}\.\d{1,6}$/.test(version)) throw new Error("发行版本号无效");
   return version.split(".").map(Number);

@@ -87,3 +87,4 @@ try {
   await writeFile(new URL("checks.json", output), JSON.stringify(evidence, null, 2));
   console.log(JSON.stringify(evidence));
 } finally { await context.close(); await browser.close(); }
+

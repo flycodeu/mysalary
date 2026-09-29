@@ -1,6 +1,6 @@
 # 薪迹
 
-轻量的个人工资档案应用。Windows 从已打开的飞书工资页读取数据，Android 查看同一份月度明细与汇总；支持 JSON 和坚果云同步。当前版本 **0.4.1**。
+轻量的个人工资档案应用。Windows 从已打开的飞书工资页读取数据，Android 查看同一份月度明细与汇总；支持 JSON 和坚果云同步。当前版本 **0.4.2**。
 
 ## 安装与使用
 
@@ -8,9 +8,9 @@
 
 | 平台 | 文件 | 要求 |
 | --- | --- | --- |
-| Windows | `salary-0.4.1-windows-setup.exe` | Windows 10 1809+/11 x64、.NET Framework 4.8、WebView2 Evergreen |
-| Windows 便携版 | `salary-0.4.1-windows.zip` | 完整解压，打开 `Salary.exe`，保留同目录资源 |
-| Android | `salary-0.4.1-debug.apk` | Android 7+；当前为自用调试签名发行线 |
+| Windows | `salary-0.4.2-windows-setup.exe` | Windows 10 1809+/11 x64、.NET Framework 4.8、WebView2 Evergreen |
+| Windows 便携版 | `salary-0.4.2-windows.zip` | 完整解压，打开 `Salary.exe`，保留同目录资源 |
+| Android | `salary-0.4.2-debug.apk` | Android 7+；当前为自用调试签名发行线 |
 
 1. Windows 安装时可选择位置，安装完成后从开始菜单打开“薪迹”。
 2. 在电脑飞书的“智慧 HR → 工资查询”展开月份，回到薪迹点击“抓取飞书工资”。
@@ -101,7 +101,7 @@ ForgeFlow 维护设计及交付事实，通过 `scripts/forgeflow-sync.mjs` 的 
 
 ## 验证边界
 
-0.4.1 已通过 249 项 Vitest、51 项浏览器检查、Windows 原生自测、Android 构建/JVM 测试/lint及与 0.4.0 的签名对比。Windows 退出弹窗和默认取消已实测；安装器隔离升级测试为 0.4.0 的已有证据，本版未改安装器。GitHub 已有公开正式发行版，更新检查从该仓库查询。
+0.4.2 已通过 249 项 Vitest、TypeScript 类型检查、Android JVM 更新校验（4 项）、Android debug 构建和 lint；APK 与 0.4.1 的签名连续性由发布脚本检查。Windows 安装包和浏览器回归由发布脚本生成；Android 真机安装器流程仍未实测。GitHub Release 更新检查从该仓库查询，Android 可在应用内下载、校验并打开系统安装器。
 
 Android 真机覆盖升级、真实坚果云双端同步及 Owner 最终验收仍待完成。识别归类仍保留无法确认的项目，不将差额消除视为正确性证明。
 

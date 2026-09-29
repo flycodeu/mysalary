@@ -1,8 +1,35 @@
 import { version } from "../../package.json";
 import { parseRelease, RELEASE_API, RELEASES_URL } from "../domain/release";
-import { hostCall, isNative, isWindows } from "./host";
+import { hostCall, isAndroid, isNative, isWindows } from "./host";
 
 export const appVersion = version;
+
+export type DownloadUpdateStatus = {
+  state: "idle" | "downloading" | "verifying" | "ready" | "error";
+  version?: string;
+  receivedBytes?: number;
+  totalBytes?: number;
+  error?: string;
+};
+
+export function getUpdateDownloadStatus(): Promise<DownloadUpdateStatus> {
+  if (!isAndroid) return Promise.resolve({ state: "idle" });
+  return hostCall<DownloadUpdateStatus>("getUpdateDownloadStatus");
+}
+
+export function downloadUpdate(version: string): Promise<DownloadUpdateStatus> {
+  if (!isAndroid) return Promise.reject(new Error("当前平台不支持应用内安装"));
+  return hostCall<DownloadUpdateStatus>("downloadUpdate", { version });
+}
+
+export function cancelUpdateDownload(): void {
+  if (isAndroid) void hostCall("cancelUpdateDownload").catch(() => undefined);
+}
+
+export function installUpdate(version: string): Promise<{ state: "installer-opened" | "permission-required" }> {
+  if (!isAndroid) return Promise.reject(new Error("当前平台不支持应用内安装"));
+  return hostCall("installUpdate", { version });
+}
 
 export async function checkForUpdates() {
   let response: { status: number; content: string | null };
@@ -29,3 +56,4 @@ export async function openRelease(url: string) {
   if (isNative) await hostCall("openExternal", { url });
   else window.open(url, "_blank", "noopener,noreferrer");
 }
+

@@ -992,6 +992,9 @@ summary::-webkit-details-marker {
   font: inherit;
   font-size: 13px;
 }
+.update-progress { height: 8px; margin: 14px 0 6px; overflow: hidden; border-radius: 99px; background: var(--line); }
+.update-progress span { display: block; height: 100%; border-radius: inherit; background: var(--accent); transition: width 180ms ease; }
+.update-progress-label { display: flex; justify-content: space-between; color: var(--muted); font-size: 12px; }
 @media (min-width: 720px) {
   .app-shell {
     margin: 24px auto;

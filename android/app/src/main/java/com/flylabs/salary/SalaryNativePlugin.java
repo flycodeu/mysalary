@@ -4,6 +4,9 @@ import android.app.Activity;
 import android.content.Intent;
 import android.net.Uri;
 import android.os.Build;
+import android.provider.Settings;
+import androidx.core.content.FileProvider;
+import java.io.File;
 import androidx.activity.result.ActivityResult;
 import com.getcapacitor.JSObject;
 import com.getcapacitor.Plugin;
@@ -24,6 +27,8 @@ public class SalaryNativePlugin extends Plugin {
     private SyncCredentialStore credentials;
     private WebDavClient webdav;
     private final ReleaseClient releases = new ReleaseClient();
+    private UpdateDownloadManager updateDownloads;
+    private volatile String pendingInstallVersion;
     private final ExecutorService storageExecutor = Executors.newSingleThreadExecutor();
     private final ExecutorService networkExecutor = Executors.newSingleThreadExecutor();
     private final AtomicBoolean pickerOpen = new AtomicBoolean(false);
@@ -34,6 +39,11 @@ public class SalaryNativePlugin extends Plugin {
         ledger = new LedgerStore(getContext().getApplicationContext());
         credentials = new SyncCredentialStore(getContext().getApplicationContext());
         webdav = new WebDavClient();
+        updateDownloads = new UpdateDownloadManager(getContext(), new okhttp3.OkHttpClient.Builder()
+            .followRedirects(true).followSslRedirects(true).retryOnConnectionFailure(false)
+            .connectTimeout(15, java.util.concurrent.TimeUnit.SECONDS)
+            .readTimeout(30, java.util.concurrent.TimeUnit.SECONDS)
+            .callTimeout(6, java.util.concurrent.TimeUnit.MINUTES).build());
         // BridgeActivity delivers the cold-start intent through handleOnNewIntent after plugin loading.
     }
 
@@ -132,6 +142,72 @@ public class SalaryNativePlugin extends Plugin {
                 call.resolve();
             } catch (RuntimeException error) { reject(call, "无法打开浏览器，请检查是否已安装浏览器", "BROWSER_UNAVAILABLE"); }
         });
+    }
+
+    @PluginMethod
+    public void getUpdateDownloadStatus(PluginCall call) {
+        call.resolve(updateState(updateDownloads.status()));
+    }
+
+    @PluginMethod
+    public void downloadUpdate(PluginCall call) {
+        String version = call.getString("version");
+        networkExecutor.execute(() -> {
+            try { call.resolve(updateState(updateDownloads.downloadBlocking(version))); }
+            catch (Exception error) { call.resolve(updateState(UpdateDownloadManager.DownloadState.error("更新下载或校验失败，请重试"))); }
+        });
+    }
+
+    @PluginMethod
+    public void cancelUpdateDownload(PluginCall call) {
+        updateDownloads.cancel();
+        call.resolve();
+    }
+
+    @PluginMethod
+    public void installUpdate(PluginCall call) {
+        String version = call.getString("version");
+        File apk = updateDownloads.readyFile(version);
+        if (apk == null) { call.reject("请先下载并校验更新包", "UPDATE_NOT_READY"); return; }
+        if (Build.VERSION.SDK_INT >= 26 && !getContext().getPackageManager().canRequestPackageInstalls()) {
+            pendingInstallVersion = version;
+            Intent settings = new Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES,
+                Uri.parse("package:" + getContext().getPackageName()));
+            try { getActivity().startActivity(settings); } catch (RuntimeException ignored) { }
+            call.resolve(new JSObject().put("state", "permission-required"));
+            return;
+        }
+        try {
+            openInstaller(apk);
+            call.resolve(new JSObject().put("state", "installer-opened"));
+        } catch (Exception error) { call.reject("无法打开系统安装器，请重试", "INSTALLER_UNAVAILABLE"); }
+    }
+
+    private JSObject updateState(UpdateDownloadManager.DownloadState value) {
+        JSObject result = new JSObject().put("state", value.state);
+        if (value.version != null) result.put("version", value.version);
+        if (value.totalBytes > 0) result.put("totalBytes", value.totalBytes);
+        if (value.receivedBytes > 0) result.put("receivedBytes", value.receivedBytes);
+        if (value.error != null) result.put("error", value.error);
+        return result;
+    }
+
+    private void openInstaller(File apk) {
+        Uri uri = FileProvider.getUriForFile(getContext(), getContext().getPackageName() + ".update-provider", apk);
+        Intent intent = new Intent(Intent.ACTION_VIEW).setDataAndType(uri, "application/vnd.android.package-archive")
+            .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION | Intent.FLAG_ACTIVITY_NEW_TASK);
+        getActivity().startActivity(intent);
+    }
+
+    @Override
+    protected void handleOnResume() {
+        super.handleOnResume();
+        String version = pendingInstallVersion;
+        if (version == null || Build.VERSION.SDK_INT < 26 || !getContext().getPackageManager().canRequestPackageInstalls()) return;
+        File apk = updateDownloads.readyFile(version);
+        pendingInstallVersion = null;
+        if (apk == null) return;
+        try { openInstaller(apk); } catch (RuntimeException ignored) { }
     }
 
     @PluginMethod
@@ -409,5 +485,6 @@ public class SalaryNativePlugin extends Plugin {
         // Allow a file copy already in progress to finish; private metadata makes it discoverable on restart.
         storageExecutor.shutdown();
         networkExecutor.shutdown();
+        if (updateDownloads != null) updateDownloads.cancel();
     }
 }
