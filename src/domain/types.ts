@@ -56,6 +56,7 @@ export interface Reconciliation {
   calculatedGrossMinor: number | null;
   calculatedDeductionsMinor: number | null;
   calculatedNetMinor: number | null;
+  /** Derived from stated gross minus stated net; this is not a source deduction field. */
   statedDeductionMinor: number | null;
   /** Stated gross - stated net - known deductions; may be a partial comparison. */
   deductionDifferenceMinor: number | null;

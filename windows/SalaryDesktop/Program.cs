@@ -38,6 +38,9 @@ namespace SalaryDesktop
         private bool captureRunning;
         private bool browserReady;
         private bool windowActive;
+        private int activeOperations;
+        private bool applicationBusy;
+        private bool closeDialogOpen;
         private CoreWebView2MemoryUsageTargetLevel? memoryTarget;
         public DesktopForm()
         {
@@ -59,6 +62,37 @@ namespace SalaryDesktop
             Uri uri;
             return Uri.TryCreate(source, UriKind.Absolute, out uri) && uri.Scheme == "https" && uri.Host == "salary.local" && uri.Port == 443 && string.IsNullOrEmpty(uri.UserInfo);
         }
+        private bool HasPendingWork { get { return applicationBusy || activeOperations > 0 || captureRunning; } }
+        protected override void OnFormClosing(FormClosingEventArgs e)
+        {
+            base.OnFormClosing(e);
+            if (e.Cancel) return;
+            var action = ClosePolicy.Decide(e.CloseReason, HasPendingWork, closeDialogOpen, false);
+            if (action == CloseAction.Allow) return;
+            e.Cancel = true;
+            if (action == CloseAction.KeepOpen) return;
+            closeDialogOpen = true;
+            try
+            {
+                if (action == CloseAction.Busy)
+                {
+                    ShowBusyBeforeExit();
+                    return;
+                }
+                var response = MessageBox.Show(this, "退出薪迹？", "薪迹", MessageBoxButtons.OKCancel,
+                    MessageBoxIcon.Question, MessageBoxDefaultButton.Button2);
+                if (response != DialogResult.OK) return;
+                // Native dialogs run a message loop: a pending web request may arrive while one is open.
+                action = ClosePolicy.Decide(e.CloseReason, HasPendingWork, false, true);
+                if (action == CloseAction.Allow) e.Cancel = false;
+                else ShowBusyBeforeExit();
+            }
+            finally { closeDialogOpen = false; }
+        }
+        private void ShowBusyBeforeExit()
+        {
+            MessageBox.Show(this, "正在处理数据，请稍后再退出。", "薪迹", MessageBoxButtons.OK, MessageBoxIcon.Information);
+        }
         private async Task InitializeAsync()
         {
             try
@@ -66,9 +100,12 @@ namespace SalaryDesktop
                 var assets = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "app");
                 if (!File.Exists(Path.Combine(assets, "index.html"))) throw new UserError("应用文件不完整，请重新安装薪迹后再试。");
                 var environment = await CoreWebView2Environment.CreateAsync(null, Path.Combine(store.DirectoryPath, "WebView2"));
+                if (IsDisposed || Disposing) return;
                 await web.EnsureCoreWebView2Async(environment);
+                if (IsDisposed || Disposing) return;
                 var core = web.CoreWebView2;
                 await core.AddScriptToExecuteOnDocumentCreatedAsync("Object.defineProperty(window, '__salaryDesktop', { value: true });");
+                if (IsDisposed || Disposing) return;
                 core.SetVirtualHostNameToFolderMapping("salary.local", assets, CoreWebView2HostResourceAccessKind.DenyCors);
                 core.Settings.AreDevToolsEnabled = false;
                 core.Settings.AreDefaultContextMenusEnabled = false;
@@ -98,6 +135,7 @@ namespace SalaryDesktop
         }
         private void ShowStartupError(string message)
         {
+            if (IsDisposed || Disposing) return;
             browserReady = false;
             web.Visible = false;
             Controls.Add(new Label { Text = message, Dock = DockStyle.Fill, Padding = new Padding(32), Font = new System.Drawing.Font("Microsoft YaHei UI", 12) });
@@ -120,8 +158,9 @@ namespace SalaryDesktop
         }
         private async void Receive(object sender, CoreWebView2WebMessageReceivedEventArgs e)
         {
-            if (!IsAppOrigin(e.Source)) return;
+            if (IsDisposed || Disposing || !IsAppOrigin(e.Source)) return;
             string id = null;
+            var operationStarted = false;
             try
             {
                 if (Encoding.UTF8.GetByteCount(e.WebMessageAsJson) > JsonData.MaxBytes * 2 + 8192) throw new UserError("请求数据过大。");
@@ -132,11 +171,14 @@ namespace SalaryDesktop
                 id = (string)value;
                 var method = StringArg(request, "method");
                 var arguments = request.TryGetValue("args", out value) ? value as Dictionary<string, object> : null;
+                activeOperations++;
+                operationStarted = true;
                 var result = await Dispatch(method, arguments ?? new Dictionary<string, object>());
                 Respond(new { id = id, result = result });
             }
             catch (UserError error) { if (id != null) Respond(new { id = id, error = error.Message }); }
             catch (Exception) { if (id != null) Respond(new { id = id, error = "操作未完成，请重试。" }); }
+            finally { if (operationStarted) activeOperations--; }
         }
         private void Respond(object response)
         {
@@ -146,6 +188,11 @@ namespace SalaryDesktop
         {
             switch (method)
             {
+                case "setAppBusy":
+                    object busy;
+                    if (!args.TryGetValue("busy", out busy) || !(busy is bool)) throw new UserError("操作参数不完整。");
+                    applicationBusy = (bool)busy;
+                    return new { };
                 case "loadLedger": return new { content = await Task.Run(() => store.LoadLedger()) };
                 case "saveLedger":
                     var content = StringArg(args, "content");

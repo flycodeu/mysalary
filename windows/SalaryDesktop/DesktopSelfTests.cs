@@ -21,6 +21,7 @@ namespace SalaryDesktop
                 Protocol().GetAwaiter().GetResult();
                 SnapshotSelfTests.RunAsync().GetAwaiter().GetResult();
                 ReleaseSelfTests.RunAsync().GetAwaiter().GetResult();
+                ClosePolicySelfTests.Run();
                 Assert(DesktopForm.IsAppOrigin("https://salary.local/index.html") && !DesktopForm.IsAppOrigin("http://salary.local/index.html") && !DesktopForm.IsAppOrigin("https://salary.local.evil.test") && !DesktopForm.IsAppOrigin("https://salary.local:444") && !DesktopForm.IsAppOrigin("https://user@salary.local"));
                 Console.WriteLine("desktop-self-test=pass;checks=atomic-ledger,corruption-stop,backup-retention,explicit-restore,restore-copy-failure,size-limit,dpapi,credential-clear,origin,webdav-404,missing-parent-409,existing-parent-409,conditional-create,conditional-update,weak-etag,conflict,redirect,auth,rate-limit,response-limit");
                 return 0;

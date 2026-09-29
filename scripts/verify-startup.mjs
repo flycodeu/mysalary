@@ -29,6 +29,7 @@ function capture(month) {
 }
 await context.exposeFunction("__salaryTestHost", async ({ method, args }) => {
   calls.push(method);
+  if (method === "setAppBusy") return {};
   if (method === "loadLedger") {
     if (calls.filter((call) => call === "loadLedger").length === 1) {
       await firstRead;
@@ -74,10 +75,11 @@ try {
   assert.equal(await page.getByRole("button", { name: "抓取飞书工资", exact: true }).first().isDisabled(), true);
   await page.getByRole("button", { name: "更多操作" }).click();
   assert.equal(await page.getByRole("button", { name: "导入工资文件", exact: true }).isDisabled(), true);
-  await page.getByRole("dialog", { name: "更多", exact: true }).getByRole("button", { name: "关闭", exact: true }).click();
+  assert.equal(await page.getByRole("dialog", { name: "更多", exact: true }).getByRole("button", { name: "关闭", exact: true }).isDisabled(), true);
   checks.push("loading_does_not_claim_empty_or_allow_import_capture");
   releaseFirstRead();
   await page.locator("main[data-storage-state='error']").waitFor();
+  await page.getByRole("dialog", { name: "更多", exact: true }).getByRole("button", { name: "关闭", exact: true }).click();
   await page.getByRole("heading", { name: "工资档案未能读取" }).waitFor();
   assert.equal(await page.getByRole("heading", { name: "还没有工资档案" }).count(), 0);
   checks.push("startup_failure_shows_error_and_retry_not_empty");
@@ -89,7 +91,7 @@ try {
   await page.getByRole("button", { name: "重试读取档案" }).click();
   await page.locator("main[data-storage-state='ready']").waitFor();
   await page.getByRole("heading", { name: "2030 年 5 月" }).waitFor();
-  assert.deepEqual(calls.slice(beforeRetry), ["loadLedger"]);
+  assert.deepEqual(calls.slice(beforeRetry).filter((method) => method !== "setAppBusy"), ["loadLedger"]);
   assert.equal(await page.locator(".archive-row").count(), 1);
   assert.equal(await page.locator(".preview-label").count(), 0);
   checks.push("retry_reads_existing_native_ledger_without_recapture");

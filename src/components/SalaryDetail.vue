@@ -45,11 +45,21 @@ const differenceLabel = computed(() => {
   const value = result.value;
   if (!value) return "";
   if (value.status === "consistent") return "金额一致";
-  if (value.deductionComparisonComplete && value.deductionDifferenceMinor)
-    return `扣款明细差 ${props.masked ? "••••" : formatMoney(Math.abs(value.deductionDifferenceMinor))} 元`;
+  if (value.deductionDifferenceMinor)
+    return `已列扣款差 ${props.masked ? "••••" : formatMoney(Math.abs(value.deductionDifferenceMinor))} 元`;
   if (value.grossDifferenceMinor)
     return `应发明细差 ${props.masked ? "••••" : formatMoney(Math.abs(value.grossDifferenceMinor))} 元`;
-  return value.status === "unresolved" ? "部分明细未归类" : "合计与明细有差额";
+  if (value.statedDeductionMinor === null) return "原载总额缺失，无法完整核对";
+  if (value.unresolvedLineIds.length) return "部分明细未归类或金额缺失";
+  return value.status === "unresolved" ? "部分金额无法核算" : "合计与明细有差额";
+});
+const deductionExplanation = computed(() => {
+  const difference = result.value?.deductionDifferenceMinor;
+  if (difference == null || difference === 0) return "";
+  const amount = props.masked ? "••••" : formatMoney(Math.abs(difference));
+  return difference > 0
+    ? `总额推导的扣款比已识别扣款多 ${amount} 元。`
+    : `已识别扣款比总额推导的扣款多 ${amount} 元。`;
 });
 function money(value: number | null | undefined) {
   return props.masked ? "••••" : value == null ? "—" : formatMoney(value);
@@ -99,7 +109,7 @@ function money(value: number | null | undefined) {
           ><strong>{{ money(draft?.statedGrossMinor) }}</strong>
         </div>
         <div>
-          <span>扣款合计</span
+          <span>扣款（推算）</span
           ><strong>{{ money(result?.statedDeductionMinor) }}</strong>
         </div>
       </div>
@@ -120,21 +130,59 @@ function money(value: number | null | undefined) {
         ><span class="details-chevron">⌄</span>
       </summary>
       <div class="reconciliation-body">
-        <p class="muted">扣款合计按应发减实发计算。</p>
+        <p><strong>扣款核对</strong></p>
         <dl>
           <div>
-            <dt>明细应发</dt>
-            <dd>{{ money(result.calculatedGrossMinor) }}</dd>
+            <dt>原载应发</dt>
+            <dd>{{ money(draft?.statedGrossMinor) }}</dd>
           </div>
           <div>
-            <dt>明细扣款</dt>
-            <dd>{{ money(result.calculatedDeductionsMinor) }}</dd>
+            <dt>原载实发</dt>
+            <dd>{{ money(draft?.statedNetMinor) }}</dd>
+          </div>
+          <div>
+            <dt>两项相减 · 推导扣款</dt>
+            <dd>{{ money(result.statedDeductionMinor) }}</dd>
+          </div>
+          <div>
+            <dt>已识别扣款{{ result.calculatedDeductionsMinor === null ? "（部分）" : "" }}</dt>
+            <dd>{{ money(result.knownDeductionsMinor) }}</dd>
+          </div>
+          <div>
+            <dt>两者差额</dt>
+            <dd>{{ money(result.deductionDifferenceMinor) }}</dd>
+          </div>
+        </dl>
+        <p v-if="deductionExplanation">{{ deductionExplanation }}</p>
+        <p v-if="result.deductionDifferenceMinor" class="muted">
+          当前采集明细尚未解释这部分差额，无法仅凭此档案确定是采集遗漏、页面未列明扣项，还是合计口径不同。原载实发保持不变。
+        </p>
+        <p v-if="result.calculatedDeductionsMinor === null" class="muted">
+          仍有未归类或金额缺失的项目，当前扣款小计不完整。
+        </p>
+        <p v-if="result.statedDeductionMinor === null" class="muted">
+          原载应发或实发缺失，无法推导扣款及比较差额。
+        </p>
+        <p><strong>应发与明细核对</strong></p>
+        <dl>
+          <div>
+            <dt>已识别应发{{ result.calculatedGrossMinor === null ? "（部分）" : "" }}</dt>
+            <dd>{{ money(result.knownGrossMinor) }}</dd>
+          </div>
+          <div>
+            <dt>与原载应发差额</dt>
+            <dd>{{ money(result.grossDifferenceMinor) }}</dd>
           </div>
           <div>
             <dt>明细实发</dt>
             <dd>{{ money(result.calculatedNetMinor) }}</dd>
           </div>
+          <div v-for="difference in result.groupDifferences" :key="difference.lineId">
+            <dt>{{ difference.label }}与已列子项差额</dt>
+            <dd>{{ money(difference.differenceMinor) }}</dd>
+          </div>
         </dl>
+        <p v-if="result.unresolvedLineIds.length" class="muted">以下项目尚未确定计入口径，保留来源金额：</p>
         <ul v-if="result.unresolvedLineIds.length">
           <li
             v-for="line in draft?.lines.filter((line) =>

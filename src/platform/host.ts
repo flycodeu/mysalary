@@ -20,7 +20,8 @@ declare global {
 }
 // The host marks its document before loading Vue, even if the message bridge is not ready yet.
 export const isWindows = window.__salaryDesktop === true || Boolean(window.chrome?.webview);
-export const isNative = isWindows || Capacitor.getPlatform() === "android";
+export const isAndroid = Capacitor.getPlatform() === "android";
+export const isNative = isWindows || isAndroid;
 const native =
   registerPlugin<
     Record<string, (args: Record<string, unknown>) => Promise<unknown>>

@@ -1,22 +1,24 @@
 # 薪迹
 
-轻量的个人工资档案应用。Windows 从已打开的飞书工资页读取数据，Android 查看同一份月度明细与汇总；支持 JSON 和坚果云同步。当前版本 **0.4.0**。
+轻量的个人工资档案应用。Windows 从已打开的飞书工资页读取数据，Android 查看同一份月度明细与汇总；支持 JSON 和坚果云同步。当前版本 **0.4.1**。
 
 ## 安装与使用
 
-安装包放在 [GitHub Releases](https://github.com/flycodeu/mysalary/releases)。仓库首次发布前，可使用本地 `releases` 中构建的文件。
+安装包放在 [GitHub Releases](https://github.com/flycodeu/mysalary/releases)。
 
 | 平台 | 文件 | 要求 |
 | --- | --- | --- |
-| Windows | `salary-0.4.0-windows-setup.exe` | Windows 10 1809+/11 x64、.NET Framework 4.8、WebView2 Evergreen |
-| Windows 便携版 | `salary-0.4.0-windows.zip` | 完整解压，打开 `Salary.exe`，保留同目录资源 |
-| Android | `salary-0.4.0-debug.apk` | Android 7+；当前为自用调试签名发行线 |
+| Windows | `salary-0.4.1-windows-setup.exe` | Windows 10 1809+/11 x64、.NET Framework 4.8、WebView2 Evergreen |
+| Windows 便携版 | `salary-0.4.1-windows.zip` | 完整解压，打开 `Salary.exe`，保留同目录资源 |
+| Android | `salary-0.4.1-debug.apk` | Android 7+；当前为自用调试签名发行线 |
 
 1. Windows 安装时可选择位置，安装完成后从开始菜单打开“薪迹”。
 2. 在电脑飞书的“智慧 HR → 工资查询”展开月份，回到薪迹点击“抓取飞书工资”。
 3. 选择月份查看实发工资、应发构成及扣款。来源与核对详情按需展开；金额可隐藏，删除的档案可恢复。
 
 仅采集已展开且字段完整的月份。程序默认只读展示，不再执行截图 OCR。旧设备中的截图、已保存 OCR 和人工草稿仍可查看。
+
+手机系统返回或从屏幕两侧边缘向内滑动，先关闭当前弹窗，再返回月份列表；主页返回会确认退出。Windows 点击关闭或按 Alt+F4 也会确认，正在处理数据时暂缓退出。
 
 ### 数据与同步
 
@@ -28,6 +30,8 @@ Windows 工资数据位于 `%LOCALAPPDATA%\SalaryTrail\Desktop`，与程序安�
 JSON 是明文工资档案，不含同步密码。同步密码由 Windows DPAPI / Android Keystore 本机保护。云端使用 `SalaryTrail` 下按内容摘要命名的增量文件，兼容旧 `archive-v1.json`。旧截图、OCR 与手工草稿仅保留在原设备，不进入新账本同步。
 
 金额以整数分保存，未知为 `null`。来源总额、明细计算和核对结果分别保存；负补发从应发中扣减，真实差额不自动补平。读取失败时可重试，损坏账本支持从 JSON 备份显式恢复。
+
+“扣款（推算）”来自原载应发减原载实发。出现差额时，展开核对可查看已识别扣款及未解释金额；汇总与子项不会重复计算，系统不会猜测缺失扣项或修改原载实发。
 
 ## 更新
 
@@ -70,14 +74,14 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts/generate-icons.ps1
 
 ### 发布新版
 
-1. 运行 `pnpm version:set 0.4.1`，同步前端、Windows、Android 的显示版本，并递增 Android `versionCode`。
+1. 运行 `pnpm version:set 0.4.2`（替换为下一版本），同步前端、Windows、Android 的显示版本，并递增 Android `versionCode`。
 2. 用原签名密钥构建；脚本对比上一版 APK 的身份、签名及版本，发现换签或降级会停止：
 
    ```powershell
-   pnpm release:build -JdkPath 'D:\Tools\jdk-21' -PreviousApk '.\releases\salary-0.4.0-debug.apk'
+   pnpm release:build -JdkPath 'D:\Tools\jdk-21' -PreviousApk '.\releases\salary-0.4.1-debug.apk'
    ```
 
-3. 完成设备验收后，提交并推送代码，创建对应的 `v0.4.1` 正式 GitHub Release。上传同版本 `windows-setup.exe`、`windows.zip`、`debug.apk` 和 `SHA256SUMS.txt`。文件名须保持 `salary-版本-平台后缀`。
+3. 记录自动化及设备验证结果，提交并推送代码，创建对应的正式 GitHub Release；发布说明须列出未验证项。上传同版本 `windows-setup.exe`、`windows.zip`、`debug.apk` 和 `SHA256SUMS.txt`。文件名须保持 `salary-版本-平台后缀`。
 
 构建命令不会自动提交、推送或发布。源码 CI 只运行前端测试与构建。安装包应放 Releases，不放 Git；密钥、工资文件和凭据均不进入仓库。
 
@@ -93,10 +97,12 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts/generate-icons.ps1
 | `android/app/src/main/java/com/flylabs/salary/` | Android 文件、凭据、网络与桥接 |
 | `scripts/`、`tests/` | 构建、升级校验和合成回归 |
 
-ForgeFlow 维护设计及交付事实，通过 `scripts/forgeflow-sync.mjs` 的 API 与版本校验同步；默认只生成计划，`--apply` 才写入。用 `FORGEFLOW_REPO` 指定 ForgeFlow 本地源码位置。历史阶段文档及私有验证留在被忽略的 `.artifacts`，仓库 Markdown 仅维护此 README。
+ForgeFlow 维护设计及交付事实，通过 `scripts/forgeflow-sync.mjs` 的 API 与版本校验同步；默认只生成计划，`--apply` 才写入。`--github` 读取公开的 main 提交、最新正式 Release 和安装包信息，`--evidence .artifacts/forgeflow/验证文件.json` 登记本次验证。用 `FORGEFLOW_REPO` 指定 ForgeFlow 本地源码位置。历史阶段文档及私有验证留在被忽略的 `.artifacts`，仓库 Markdown 仅维护此 README。
 
 ## 验证边界
 
-0.4.0 已通过领域/存储/更新测试、桌面和手机尺寸浏览器交互、Windows 原生自测及隔离安装升级测试、Android 构建/JVM 测试/lint，以及与上一版 APK 的包名和签名对比。Windows 更新请求已实际连通 GitHub；尚无公开 Release 时返回未发布状态。
+0.4.1 已通过 249 项 Vitest、51 项浏览器检查、Windows 原生自测、Android 构建/JVM 测试/lint及与 0.4.0 的签名对比。Windows 退出弹窗和默认取消已实测；安装器隔离升级测试为 0.4.0 的已有证据，本版未改安装器。GitHub 已有公开正式发行版，更新检查从该仓库查询。
 
 Android 真机覆盖升级、真实坚果云双端同步及 Owner 最终验收仍待完成。识别归类仍保留无法确认的项目，不将差额消除视为正确性证明。
+
+Android 直接读取其他应用中的工资页仍处于可行性验证，当前 APK 尚无该入口。可控 HR 页面优先提供结构化 JSON 分享；飞书页面需要先用真机验证可访问内容是否完整，不能将 Windows 可读取作为 Android 同样可行的证明。

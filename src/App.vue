@@ -1,16 +1,17 @@
 <script setup lang="ts">
-import { computed, ref, watch } from "vue";
+import { computed, onMounted, ref, watch } from "vue";
 import { formatMoney } from "./domain/money";
 import { monthlyOverview } from "./domain/overview";
 import { createDemo, type ArchiveItem } from "./platform/archive";
 import { useArchive } from "./composables/useArchive";
+import { useBackNavigation } from "./composables/useBackNavigation";
 import AppIcon from "./components/AppIcon.vue";
 import SalaryDetail from "./components/SalaryDetail.vue";
 import ModalSheet from "./components/ModalSheet.vue";
 import SyncPanel from "./components/SyncPanel.vue";
 import UpdatePanel from "./components/UpdatePanel.vue";
 import { appVersion } from "./platform/updates";
-import { isNative, isWindows } from "./platform/host";
+import { hostCall, isAndroid, isNative, isWindows } from "./platform/host";
 
 const fileInput = ref<HTMLInputElement>();
 const {
@@ -44,6 +45,32 @@ const showMenu = ref(false);
 const showSync = ref(false);
 const showUpdates = ref(false);
 const masked = ref(false);
+const showExit = ref(false);
+const exiting = ref(false);
+const navigation = useBackNavigation({
+  blocked: computed(() => operationBlocked.value || exiting.value),
+  page: computed(() => selected.value ? "detail" : showDeleted.value ? "deleted" : "root"),
+  back: () => {
+    if (selected.value) selected.value = undefined;
+    else showDeleted.value = false;
+  },
+  root: () => { if (isAndroid) showExit.value = true; },
+});
+const backState = navigation.state;
+const backGesture = navigation.gesture;
+async function exitApp() {
+  if (!isAndroid || operationBlocked.value || exiting.value) return;
+  exiting.value = true;
+  try { await hostCall("exitApp"); }
+  catch { error.value = "退出未完成，请重试"; }
+  finally { exiting.value = false; showExit.value = false; }
+}
+function updateDesktopBusy() {
+  // Older desktop hosts may not implement this advisory message yet.
+  if (isWindows) void hostCall("setAppBusy", { busy: operationBlocked.value }).catch(() => {});
+}
+watch(operationBlocked, updateDesktopBusy, { immediate: true, flush: "sync" });
+onMounted(updateDesktopBusy);
 
 const recent = computed(() =>
   active.value.find(
@@ -130,7 +157,10 @@ function showDemo() {
 </script>
 
 <template>
-  <div class="app-shell">
+  <div class="app-shell" :data-back-state="backState">
+    <div v-if="backGesture" class="back-gesture" :class="backGesture.edge" aria-hidden="true">
+      <AppIcon name="back" />
+    </div>
     <header class="app-header">
       <div class="brand-group"><button
         class="brand"
@@ -484,5 +514,32 @@ function showDemo() {
         </button>
       </div>
     </ModalSheet>
+    <ModalSheet :open="showExit" title="退出薪迹？" :busy="operationBlocked || exiting" @close="showExit = false">
+      <p class="delete-description">退出后，工资档案仍保存在本机。</p>
+      <div class="sheet-actions">
+        <button class="secondary-button" :disabled="operationBlocked || exiting" @click="showExit = false">继续使用</button>
+        <button class="primary-button" :disabled="operationBlocked || exiting" @click="exitApp">退出应用</button>
+      </div>
+    </ModalSheet>
   </div>
 </template>
+
+<style scoped>
+:global(html) { overscroll-behavior-x: none; }
+.back-gesture {
+  position: fixed;
+  top: 46%;
+  z-index: 100;
+  display: grid;
+  place-items: center;
+  width: 42px;
+  height: 54px;
+  color: var(--accent);
+  background: var(--surface);
+  border: 1px solid var(--line);
+  box-shadow: 0 3px 15px #173b3324;
+  pointer-events: none;
+}
+.back-gesture.left { left: 0; border-radius: 0 20px 20px 0; }
+.back-gesture.right { right: 0; border-radius: 20px 0 0 20px; }
+</style>

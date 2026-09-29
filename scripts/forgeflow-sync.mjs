@@ -14,11 +14,12 @@ const targetVersion = packageJson.version;
 if (typeof targetVersion !== "string" || !/^\d+\.\d+\.\d+$/.test(targetVersion)) throw new Error("package.json must contain a stable release version.");
 const apply = process.argv.includes("--apply");
 const evidenceIndex = process.argv.indexOf("--evidence");
+const includeGitHub = process.argv.includes("--github");
 if (evidenceIndex >= 0 && !process.argv[evidenceIndex + 1]) throw new Error("--evidence requires a JSON path.");
 const hash = (value) => createHash("sha256").update(value).digest("hex");
 const normalize = (value) => value.replace(/\r\n?/g, "\n").trim();
 const heading = `薪迹 ${targetVersion} 当前双端方案`;
-const ownership = "设计、实现、自动化测试、真实设备验证与 Owner 验收分别记录。本文不代表 Owner 验收；未发布 GitHub Release。";
+const ownership = "设计、实现、自动化测试、真实设备验证与 Owner 验收分别记录。本文不代表 Owner 验收；源码推送和安装包发布以 GitHub 交付记录中的版本、提交与证据为准。";
 const modules = [
   {
     code: "D01", name: "Windows 工资采集", legacy: ["F04", "F21"],
@@ -39,6 +40,7 @@ const modules = [
       "金额统一使用整数分；未知为 null。应发由基本薪水、津贴奖金、工程类嘉奖及补发等实际字段构成，负补发保留负号；其他扣款按字段语义处理。",
       "汇总字段和子项不能重复计入。核算规则为纯函数，由共享领域层定义，Windows 和 Android 使用同一套结构化数据。",
       "来源应发、来源实发和明细计算值分开保存。应发减实发可以展示来源扣款；明细有差额时明确显示，不调整其他项目凑平。",
+      "应发减实发属于总额推导扣款，不冒充原载扣款字段。存在差额时展开显示推导金额、已列明细合计和未解释差额；原始文件未提供归属证据时，不猜测遗漏项、不自动改实发。",
       "账本保存使用已有原子替换与备份路径。启动先显示读取中；读取失败显示错误和只读重试入口，不能冒充空账本。刷新失败保留已展示数据。",
       "删除采用可恢复状态，多端以版本状态合并；原档案证据和有效历史不因重复导入、删除恢复或升级消失。",
     ],
@@ -53,6 +55,7 @@ const modules = [
       "年度汇总、来源、补充信息等按需展开。隐藏金额时来源弹层也不泄露金额；示例明确标注为合成数据。",
       "保留年份筛选、同月多来源、来源查看、删除与恢复。新流程不再让手机承担 OCR 和逐行人工核对；旧档案读取仅作为兼容边界，不成为新采集入口。",
       "统一桌面、Android 与网页预览的品牌和交互。预览明确说明数据存于该浏览器；原生桌面与手机不得静默回退到浏览器档案库。",
+      "Android 系统返回先关闭最上层弹窗，再从月份详情或已删除列表返回主页；主页确认后才退出。窄屏支持两侧边缘返回手势，纵向滚动不能误触。处理导入或同步时保护当前操作。",
     ],
     files: ["src/App.vue", "src/style.css", "src/components/SalaryDetail.vue", "src/components/ModalSheet.vue", "src/platform/host.ts"],
     acceptance: "320/390 像素手机与桌面宽度下无横向溢出，月份选择、金额遮挡、来源弹层、删除恢复真实交互通过；Android 真机结果独立登记。",
@@ -77,7 +80,8 @@ const modules = [
       "Windows 正式安装身份固定，支持自选普通目录，升级默认沿用原目录。安装与卸载仅管理程序文件，拒绝与数据目录重叠、目录联接和短路径别名等危险目标。",
       "Android applicationId 与签名保持稳定；覆盖安装兼容性必须以签名和设备实际安装为证据，编译成功不能替代升级保留数据验证。",
       "GitHub Releases 查询由用户主动触发，区分无新版本、未配置发布源、网络失败和可下载版本。不能把未发布的版本显示成已可用更新，也不后台自动覆盖安装。",
-      "本轮准备源码与本地构建产物，不自动发布 GitHub Release。安装器隔离测试与真实应用启动验证单独报告。",
+      "构建命令只生成本地产物；GitHub 推送与 Release 发布按用户授权执行，并登记准确提交、标签、安装包及公开下载校验。安装器隔离测试与真实应用启动验证单独报告。",
+      "Windows 点击关闭或 Alt+F4 先确认退出；采集、保存或同步进行中阻止退出，避免在前端合并与原生保存之间打断工作。系统关机不显示交互式确认。",
     ],
     files: ["windows/Installer/Salary.iss", "scripts/windows-installer.ps1", "scripts/windows-installer-test.ps1", "src/domain/release.ts", "src/platform/updates.ts", "src/components/UpdatePanel.vue"],
     acceptance: "自选目录、覆盖升级、卸载保留数据和路径拒绝用例通过；真实程序两次启动数据一致；发布源未准备好时不制造更新状态。",
@@ -111,15 +115,61 @@ const retired = {
   F10: "公司模板与别名学习不属于当前范围。当前 D01 读取已展开的飞书工资页面，D02 使用明确字段规则。",
   F15: "独立本地加密档案与恢复密钥未纳入本次交付。D04 的系统凭据保护和 HTTPS 同步不等同于工资档案端到端加密。",
 };
+const mobileCaptureDesign = [
+  "# Android 直接采集：候选方案与验证条件",
+  "## 状态与前提",
+  "状态：设计评估完成；采集实现未开始，真机验证 NOT_RUN。用户确认公司 HR 应用代码不能修改，当前不便连接手机，先交付返回、退出与核对修复。0.4.1 不增加无障碍服务、权限或手机抓取按钮。",
+  "## 预期操作",
+  "用户在飞书或公司 HR 应用打开智慧 HR 并展开月份，主动触发一次读取；薪迹检查月份、字段与金额，复用现有规则归档。无须逐行填写或自行对比金额。工资来源已存在差额时，如实保留。",
+  "## 先验证能否读取",
+  "连接授权的 Android 设备后，只探测用户主动打开的目标页面，不枚举其他应用内容。检查节点是否暴露月份、原载应发/实发、标签、金额和负号；检查折叠、滚动或虚拟列表是否造成整行缺失。ADB 节点可见只能说明实验工具可读，不能替代实际 Android 服务读取验证。",
+  "通过后才实现可选的按次采集：用户手动开启相应能力，用系统快捷操作触发，限定经过真机确认的目标应用和 HR 页面；读取完成即结束，不闲置轮询、不抓取其他页面、不上传或记录工资原文。采集前后的月份必须一致，页面变动时拒绝入账。",
+  "月份不明确、标签金额未配对、重复项冲突或无法证明完整时，保存私有原始采集并提示重试，不进入正式账本。全字段完整性与应发减实发的算术校验分开，不能因为金额凑平便宣称采集完整。",
+  "## 选型边界",
+  "AccessibilityService 是待验证候选，需要用户明确开启和 canRetrieveWindowContent。Android 官方将其定位为辅助使用能力，正式方案还需确认适用性与分发要求，不能仅凭 API 存在就承诺可上线。节点缺失或受保护时不尝试绕过应用隔离；保留已有 Windows 采集后同步路径。",
+  "如果原 HR 应用已提供工资 JSON 导出/分享，可直接复用 ACTION_SEND / ACTION_VIEW 导入。普通分享链接不是工资数据。自建 WebView 只能访问它自己加载的页面，不能继承另一应用的登录会话或直接读取其页面。截图 OCR 不作为准确、省事目标下的默认方案。",
+  "## 验收",
+  "目标手机上完整月份读出、原始字段逐项自动比对、负号/零/空值、滚动与折叠、重复读取去重、切月中断、失败保留来源、应用重启和数据持久化均需真实验证。采集入口、系统授权与停止流程也必须实际操作通过。当前以上结果均为 NOT_RUN，不提升 Owner 状态。",
+  "## 官方参考",
+  "https://developer.android.com/reference/android/accessibilityservice/AccessibilityService",
+  "https://developer.android.com/guide/topics/ui/accessibility/service",
+  "https://developer.android.com/reference/android/webkit/WebView",
+].join("\n\n");
 const currentSpecs = [
   { kind: "background", content: overview },
   { kind: "requirements", content: [`# ${heading}：需求与验证`, ...modules.map((item) => `## ${item.code} ${item.name}\n\n${item.purpose}\n\n验收：${item.acceptance}`), ownership].join("\n\n") },
-  { kind: "research", content: `# 结构化采集可行性与旧 OCR 方案取代说明\n\n${contentFor(modules[0])}\n\n## 可行性证据边界\n\n独立网页受飞书会话限制，不据此绕过认证。使用用户已打开的桌面页面读取可访问文本。模型识别准确率不再是新流程的数据来源；真实页面覆盖月份、采集稳定性和合计校验以实际结果为准。旧 OCR 候选调研保存在本栏历史修订中。` },
+  { kind: "research", content: `# 结构化采集可行性与旧 OCR 方案取代说明\n\n${contentFor(modules[0])}\n\n## 可行性证据边界\n\n独立网页受飞书会话限制，不据此绕过认证。使用用户已打开的桌面页面读取可访问文本。模型识别准确率不再是新流程的数据来源；真实页面覆盖月份、采集稳定性和合计校验以实际结果为准。旧 OCR 候选调研保存在本栏历史修订中。\n\n${mobileCaptureDesign}` },
   { kind: "architecture", content: [`# ${heading}：架构`, "Windows 采集 → 结构化来源 → 共享领域规则与账本 → JSON / WebDAV → Android 阅读。", contentFor(modules[1]), contentFor(modules[3]), contentFor(modules[4])].join("\n\n") },
   { kind: "technology", content: [`# ${heading}：技术与维护`, "保留 Vue 3、TypeScript、Capacitor、.NET Framework / WinForms / WebView2 和已有 WebDAV 桥接。Windows 采集按需运行；手机不新增常驻模型和服务。", contentFor(modules[2]), contentFor(modules[5])].join("\n\n") },
 ];
-const documents = [{ key: "overview", title: heading, content: overview }, ...modules.map((item) => ({ key: item.code, title: `${item.code} ${item.name}（当前）`, content: contentFor(item) }))]
+const documents = [{ key: "overview", title: heading, content: overview }, ...modules.map((item) => ({ key: item.code, title: `${item.code} ${item.name}（当前）`, content: contentFor(item) })), { key: "mobile-capture", title: "Android 直接采集（待真机验证）", content: mobileCaptureDesign }]
   .map((item) => ({ ...item, sourcePath: `salary://current/${item.key}`, originalFilename: `${item.key}.md`, contentType: "text/markdown" }));
+let github;
+if (includeGitHub) {
+  const githubRoot = "https://api.github.com/repos/flycodeu/mysalary";
+  async function publicGitHub(path, missingAllowed = false) {
+    const response = await fetch(githubRoot + path, { redirect: "error", signal: AbortSignal.timeout(20000),
+      headers: { Accept: "application/vnd.github+json", "User-Agent": "SalaryTrail-ForgeFlow" } });
+    if (missingAllowed && response.status === 404) return null;
+    if (!response.ok) throw new Error(`GitHub readback HTTP_${response.status}`);
+    return response.json();
+  }
+  const [head, release] = await Promise.all([publicGitHub("/commits/main"), publicGitHub("/releases/latest", true)]);
+  if (!/^[a-f0-9]{40}$/.test(head.sha)) throw new Error("Invalid GitHub branch commit.");
+  if (release && (release.draft || release.prerelease || !/^v\d+\.\d+\.\d+$/.test(release.tag_name))) throw new Error("Latest GitHub release is not a supported stable release.");
+  const releaseCommit = release ? await publicGitHub(`/commits/${release.tag_name}`) : null;
+  github = { mainCommit: head.sha, latestTag: release?.tag_name ?? null, releaseCommit: releaseCommit?.sha ?? null,
+    releaseUrl: release?.html_url ?? null, targetPublished: release?.tag_name === `v${targetVersion}`,
+    assets: release?.assets.map(({ name, size, digest, browser_download_url }) => ({ name, size, digest, url: browser_download_url })) ?? [] };
+  documents.push({ key: "github", title: "GitHub 源码与安装包交付（当前）", sourcePath: "salary://current/github", originalFilename: "github.md", contentType: "text/markdown",
+    content: ["# GitHub 源码与安装包交付", "仓库：https://github.com/flycodeu/mysalary", `main 已推送提交：${github.mainCommit}`,
+      release ? `最新正式发行版：${github.latestTag}\n\n地址：${github.releaseUrl}\n\n发行提交：${github.releaseCommit}` : "尚无公开正式发行版。",
+      `当前工作版本：${targetVersion}；该版本${github.targetPublished ? "已发布" : "尚未登记为最新公开发行版"}。`,
+      "## 已上传附件", ...github.assets.map((asset) => `- ${asset.name} · ${asset.size} bytes · ${asset.digest ?? "未返回摘要"}\n  ${asset.url}`),
+      "## 更新方式", "应用匿名读取 GitHub 最新正式 Release。用户主动打开检查更新，更高版本提供相应平台安装包，由系统覆盖安装；没有后台轮询或静默安装。0.3.2 没有更新入口，需要先手动安装 0.4.0 或更高版本。",
+      "本记录直接读取公开 GitHub API；下载字节和原生更新请求验证另见分层测试。发布不等于 Android 真机或 Owner 验收。",
+    ].join("\n\n") });
+}
 let evidence;
 let evidenceManifest = [];
 async function safeFile(path) {
@@ -191,7 +241,7 @@ const plan = { targetVersion, observedPackageVersion: packageJson.version, proje
   supersededDesigns: before.specifications.filter((item) => item.kind === "capability-design").map(({id,title,latestRevisionId})=>({id,title,expectedHeadRevisionId:latestRevisionId})),
   supersededDocuments: obsoleteDocuments.map(({id,title,currentRevisionId})=>({id,title,expectedRevisionId:currentRevisionId})),
   preservedRuns: before.runs.length, preservedTasks: before.tasks.length, preservedHistories: preservedHistories.map(({id,title,currentRevisionId})=>({id,title,currentRevisionId})),
-  limits: ["Project description and tree names have no supported CAS update route; current design heads explicitly replace the historical catalog.", "No task confirmation, status promotion, Run rewrite, direct database write or GitHub publication."],
+  limits: ["Project description and tree names have no supported CAS update route; current design heads explicitly replace the historical catalog.", "This sync performs no task confirmation, status promotion, Run rewrite, database write or GitHub publication; GitHub facts are recorded from read-only API calls."],
 };
 await mkdir(output, {recursive:true});
 await writeFile(join(output, "sync-plan.json"), JSON.stringify(plan,null,2)+"\n");
@@ -282,7 +332,7 @@ for (const prior of archiveBefore.documents) {
 }
 const receipt={recordedAt:new Date().toISOString(),targetVersion,observedPackageVersion:packageJson.version,projectId,mutations,evidenceIncluded:Boolean(evidence),specificationReceipts,documentReceipts,sourceReceipt,
   preservation:{runs:before.runs.length,tasks:before.tasks.length,testDocuments:preservedHistories.length,oldSpecificationRevisions:archiveBefore.specificationRevisions.length,oldDocumentRevisions:archiveBefore.documents.reduce((count,item)=>count+item.revisions.length,0),staleDesignSnapshots:after.runs.filter((run)=>run.designSnapshotStatus==="STALE").length},
-  verification:{apiReadback:"PASS",serverVersionChecks:["expectedHeadRevisionId","expectedRevisionId","expectedUpdatedAt"],directDatabaseWrite:false,ownerAccepted:false,githubPublished:false},limits:plan.limits};
+  verification:{apiReadback:"PASS",serverVersionChecks:["expectedHeadRevisionId","expectedRevisionId","expectedUpdatedAt"],directDatabaseWrite:false,ownerAccepted:false,githubPublished:github?.targetPublished ?? null,github:github ?? null},limits:plan.limits};
 await writeFile(join(output,"sync-receipt.json"),JSON.stringify(receipt,null,2)+"\n");
 await writeFile(join(output,`after-${snapshotId}.json`),JSON.stringify(archiveAfter,null,2)+"\n");
 console.log(JSON.stringify({targetVersion,mutations,evidenceIncluded:Boolean(evidence),preservation:receipt.preservation,verification:receipt.verification,receipt:join(output,"sync-receipt.json")},null,2));

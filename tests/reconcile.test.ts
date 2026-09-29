@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { reconcile } from "../src/domain/reconcile";
+import { draftFromCapture } from "../src/domain/capture";
 import type { SalaryDraft, SalaryLine } from "../src/domain/types";
 
 const row = (
@@ -104,5 +105,48 @@ describe("explicit accounting semantics", () => {
     empty.statedGrossMinor = 0;
     empty.statedNetMinor = 0;
     expect(reconcile(empty).status).toBe("unresolved");
+  });
+
+  it("keeps a source-total deduction gap when the listed deductions do not explain it", () => {
+    const input = draftFromCapture({
+      payrollMonth: "2030-01",
+      fields: [
+        { label: "应发工资", amountText: "1000" },
+        { label: "实发工资", amountText: "890" },
+        { label: "基本工资", amountText: "1000" },
+        { label: "个人所得税", amountText: "100" },
+      ],
+    });
+    const before = JSON.stringify(input);
+    const result = reconcile(input);
+    expect(result.grossDifferenceMinor).toBe(0);
+    expect(result.statedDeductionMinor).toBe(11000);
+    expect(result.knownDeductionsMinor).toBe(10000);
+    expect(result.deductionDifferenceMinor).toBe(1000);
+    expect(result.deductionComparisonComplete).toBe(true);
+    expect(result.status).toBe("difference");
+    expect(JSON.stringify(input)).toBe(before);
+    expect(input.lines.map((line) => line.label)).toEqual(["基本工资", "个人所得税"]);
+  });
+
+  it("does not classify an unknown item just because its amount could close the gap", () => {
+    const input = draftFromCapture({
+      payrollMonth: "2030-01",
+      fields: [
+        { label: "应发工资", amountText: "1000" },
+        { label: "实发工资", amountText: "890" },
+        { label: "基本工资", amountText: "1000" },
+        { label: "个人所得税", amountText: "100" },
+        { label: "待明确项目", amountText: "10" },
+      ],
+    });
+    const unknown = input.lines.find((line) => line.label === "待明确项目")!;
+    const result = reconcile(input);
+    expect(unknown.effect).toBe("unknown");
+    expect(result.unresolvedLineIds).toContain(unknown.id);
+    expect(result.deductionDifferenceMinor).toBe(1000);
+    expect(result.deductionComparisonComplete).toBe(false);
+    expect(result.calculatedNetMinor).toBeNull();
+    expect(result.status).toBe("unresolved");
   });
 });

@@ -38,6 +38,15 @@ public class SalaryNativePlugin extends Plugin {
     }
 
     @PluginMethod
+    public void exitApp(PluginCall call) {
+        // A confirmed exit waits for already queued private file writes to finish.
+        storageExecutor.execute(() -> getActivity().runOnUiThread(() -> {
+            call.resolve();
+            getActivity().finish();
+        }));
+    }
+
+    @PluginMethod
     public void listImports(PluginCall call) {
         storageExecutor.execute(() -> {
             try { call.resolve(new JSObject().put("items", store.list())); }

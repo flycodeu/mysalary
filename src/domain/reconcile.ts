@@ -136,7 +136,7 @@ export function reconcile(draft: SalaryDraft): Reconciliation {
   const statedDeductionMinor = validStated
     ? safe(
         BigInt(draft.statedGrossMinor!) - BigInt(draft.statedNetMinor!),
-        "原载扣款",
+        "总额推导扣款",
       )
     : null;
   const deductionDifferenceMinor =
@@ -218,7 +218,7 @@ export function reconcile(draft: SalaryDraft): Reconciliation {
         label: line.label,
         differenceMinor: difference,
       });
-      issues.push(`${line.label}与明细相差 ${Math.abs(difference) / 100} 元`);
+      issues.push(`${line.label}与已列子项相差 ${Math.abs(difference) / 100} 元`);
     }
   }
   return {
