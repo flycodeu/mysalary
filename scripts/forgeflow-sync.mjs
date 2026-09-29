@@ -87,13 +87,13 @@ const modules = [
       "Windows 正式安装身份固定，支持自选普通目录，升级默认沿用原目录。安装与卸载仅管理程序文件，拒绝与数据目录重叠、目录联接和短路径别名等危险目标。",
       "Android applicationId 与签名保持稳定；覆盖安装兼容性必须以签名和设备实际安装为证据，编译成功不能替代升级保留数据验证。",
       "用户打开设置时检查 GitHub 最新正式 Release，设置和更新弹窗共享同一结果，并提供重新检查。启动时不自动联网；区分无新版本、无公开版本、网络失败和可下载版本，检查失败时清除旧提示。不能把未发布的版本显示成已可用更新，也不后台自动覆盖安装。",
-      "Android 在应用内下载当前 debug.apk 发行线，显示进度并支持取消重试，校验后打开系统安装器由用户确认；未知来源权限由系统处理。缓存安装包版本必须匹配当前提示版本。Windows 当前通过浏览器获取对应安装包，由用户运行覆盖安装，不宣传为应用内自动下载。",
-      "保存、同步或截图处理中阻止开始安装；安装前等待账本写入结束。更新流程不写工资和原图，不改变私有数据目录。签名、版本与固定安装身份检查属于静态门槛；真机带数据覆盖升级仍需单独执行。",
+      "Android 在应用内下载当前 debug.apk 发行线，显示进度并支持取消重试，校验后打开系统安装器由用户确认；未知来源权限由系统处理。缓存安装包版本必须匹配当前提示版本。Windows 在应用内下载对应安装包，显示进度并支持取消重试；核对 GitHub Release 的 SHA-256 摘要，退出旧程序后由独立更新助手启动安装器，安装仍由用户确认。0.5.0 缺少此能力，首次安装 0.5.1 仍需手动下载。",
+      "保存、同步或截图处理中阻止开始安装；安装前等待账本写入结束。Windows 下载仅接受当前最新正式 Release 的固定安装包名、HTTPS GitHub 下载链和可用 SHA-256 摘要，超限、取消及摘要不符时不得运行；安装前再次校验，并待旧程序关闭。更新流程不写工资和原图，不改变私有数据目录。签名、版本与固定安装身份检查属于静态门槛；真实带数据覆盖升级仍需单独执行。",
       "构建命令只生成本地产物；GitHub 推送与 Release 发布按用户授权执行，并登记准确提交、标签、安装包及公开下载校验。安装器隔离测试与真实应用启动验证单独报告。",
       "双端居中退出确认由持久设置控制；关闭确认不能绕过操作中保护。系统关机不显示交互式确认。Android 卸载仍会清除私有数据，更新应覆盖安装而非先卸载。",
     ],
-    files: ["windows/Installer/Salary.iss", "scripts/windows-installer.ps1", "scripts/windows-installer-test.ps1", "scripts/release.ps1", "scripts/verify-android-upgrade.ps1", "src/domain/release.ts", "src/platform/updates.ts", "src/composables/useUpdateCheck.ts", "src/components/UpdatePanel.vue", "src/components/SettingsPanel.vue"],
-    acceptance: "安装路径与身份、覆盖升级与卸载保留数据分别验证；设置自动检查、失败清除旧状态、版本匹配、下载取消重试和安装前忙状态保护分别回归；Android 实际系统安装器及升级后的账本原图一致性由真机证据确认。",
+    files: ["windows/Installer/Salary.iss", "windows/SalaryDesktop/WindowsUpdateManager.cs", "windows/SalaryDesktop/UpdateHandoff.cs", "scripts/windows-installer.ps1", "scripts/windows-installer-test.ps1", "scripts/release.ps1", "scripts/verify-android-upgrade.ps1", "src/domain/release.ts", "src/platform/updates.ts", "src/composables/useUpdateCheck.ts", "src/components/UpdatePanel.vue", "src/components/SettingsPanel.vue"],
+    acceptance: "安装路径与身份、覆盖升级与卸载保留数据分别验证；设置自动检查、失败清除旧状态、版本匹配、双端下载进度、取消重试及安装前忙状态保护分别回归；Windows 校验和独立助手、Android 实际系统安装器、升级后的账本原图一致性按自动化与真实设备分别登记。",
   },
   {
     code: "D06", name: "代码维护、回归与 Git 准备", legacy: ["F05"],
@@ -175,7 +175,7 @@ if (includeGitHub) {
       release ? `最新正式发行版：${github.latestTag}\n\n地址：${github.releaseUrl}\n\n发行提交：${github.releaseCommit}` : "尚无公开正式发行版。",
       `当前工作版本：${targetVersion}；该版本${github.targetPublished ? "已发布" : "尚未登记为最新公开发行版"}。`,
       "## 已上传附件", ...github.assets.map((asset) => `- ${asset.name} · ${asset.size} bytes · ${asset.digest ?? "未返回摘要"}\n  ${asset.url}`),
-      "## 更新方式", "打开设置时匿名查询 GitHub 最新正式 Release，也可主动重新检查。Android 在应用内下载并校验，再交由系统安装器确认；Windows 使用浏览器下载对应安装包后手动运行覆盖升级。没有后台轮询或静默安装。0.3.2 没有更新入口，需要先手动安装 0.4.0 或更高版本。",
+      "## 更新方式", "打开设置时匿名查询 GitHub 最新正式 Release，也可主动重新检查。Android 在应用内下载并校验，再交由系统安装器确认；Windows 从 0.5.1 起在应用内显示下载进度、支持取消重试、核对 SHA-256 后退出旧程序并打开安装器，由用户确认。0.5.0 缺少该流程，首次升级到 0.5.1 需要手动安装。没有后台轮询或静默安装。",
       "本记录直接读取公开 GitHub API；下载字节和原生更新请求验证另见分层测试。发布不等于 Android 真机或 Owner 验收。",
     ].join("\n\n") });
 }
