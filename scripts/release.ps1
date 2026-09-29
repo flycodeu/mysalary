@@ -1,7 +1,8 @@
 ﻿param(
     [string]$JdkPath = $env:JAVA_HOME,
     [string]$SdkPath = $env:ANDROID_SDK_ROOT,
-    [string]$PreviousApk
+    [string]$PreviousApk,
+    [switch]$PublishGitHub
 )
 $ErrorActionPreference = 'Stop'
 $repoRoot = Split-Path -Parent $PSScriptRoot
@@ -45,5 +46,22 @@ try {
     $files = @($apkOut, $zipOut, (Join-Path $releaseDir "salary-$version-windows-setup.exe"))
     $hashes = @($files | ForEach-Object { "{0}  {1}" -f (Get-FileHash -LiteralPath $_ -Algorithm SHA256).Hash.ToLowerInvariant(), (Split-Path -Leaf $_) })
     [IO.File]::WriteAllLines((Join-Path $releaseDir 'SHA256SUMS.txt'), $hashes, [Text.UTF8Encoding]::new($false))
-    Write-Host "Built $version. No Git commit, push or release publication was performed."
+    if ($PublishGitHub) {
+        $ghPath = (Get-Command gh.exe -ErrorAction SilentlyContinue).Source
+        if (-not $ghPath -and (Test-Path -LiteralPath 'C:\Program Files\GitHub CLI\gh.exe')) { $ghPath = 'C:\Program Files\GitHub CLI\gh.exe' }
+        if (-not $ghPath) { throw 'GitHub CLI not found. Install gh or run without -PublishGitHub.' }
+        & $ghPath auth status
+        if ($LASTEXITCODE -ne 0) { throw 'GitHub CLI is not authenticated.' }
+        $repo = (& git config --get remote.origin.url).Trim() -replace '\.git$','' -replace '^https://github.com/',''
+        if ($repo -notmatch '^[^/]+/[^/]+$') { throw 'Cannot determine GitHub owner/repository from origin.' }
+        $tag = "v$version"
+        $assets = @($apkOut, $zipOut, (Join-Path $releaseDir "salary-$version-windows-setup.exe"), (Join-Path $releaseDir 'SHA256SUMS.txt'))
+        & $ghPath release view $tag --repo $repo *> $null
+        if ($LASTEXITCODE -eq 0) { & $ghPath release upload $tag @assets --repo $repo --clobber }
+        else { & $ghPath release create $tag @assets --repo $repo --title "薪迹 $version" --notes "自动发布 $version。" }
+        if ($LASTEXITCODE -ne 0) { throw "GitHub Release $tag publication failed." }
+        Write-Host "Published GitHub Release $tag for $repo."
+    } else {
+        Write-Host "Built $version. Use -PublishGitHub to create or update the GitHub Release."
+    }
 } finally { Pop-Location }
