@@ -21,6 +21,7 @@ namespace SalaryDesktop
                 Protocol().GetAwaiter().GetResult();
                 SnapshotSelfTests.RunAsync().GetAwaiter().GetResult();
                 ReleaseSelfTests.RunAsync().GetAwaiter().GetResult();
+                WindowsUpdateSelfTests.RunAsync().GetAwaiter().GetResult();
                 ClosePolicySelfTests.Run();
                 EvidenceSelfTests.Run();
                 WebDavEvidenceSelfTests.RunAsync().GetAwaiter().GetResult();

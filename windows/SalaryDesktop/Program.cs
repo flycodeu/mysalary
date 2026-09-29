@@ -18,6 +18,7 @@ namespace SalaryDesktop
         private static int Main(string[] args)
         {
             if (args.Contains("--self-test")) return DesktopSelfTests.Run();
+            if (args.Length > 0 && args[0] == "--install-update") return UpdateHandoff.Run(args);
             bool created;
             using (var mutex = new Mutex(true, "Local\\SalaryTrail.Desktop", out created))
             {
@@ -36,6 +37,7 @@ namespace SalaryDesktop
         private readonly LocalStore store;
         private readonly EvidenceStore evidence;
         private readonly AppSettingsStore appSettings;
+        private readonly WindowsUpdateManager updates;
         private readonly SemaphoreSlim writeGate = new SemaphoreSlim(1, 1);
         private bool captureRunning;
         private bool browserReady;
@@ -45,6 +47,8 @@ namespace SalaryDesktop
         private bool closeDialogOpen;
         private bool closeConfirmed;
         private bool exitHandlerReady;
+        private bool installExitApproved;
+        private System.Diagnostics.Process updateHelper;
         private readonly System.Windows.Forms.Timer exitRequestTimer = new System.Windows.Forms.Timer { Interval = 1200 };
         private CoreWebView2MemoryUsageTargetLevel? memoryTarget;
         public DesktopForm()
@@ -57,6 +61,7 @@ namespace SalaryDesktop
             store = new LocalStore(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "SalaryTrail", "Desktop"));
             evidence = new EvidenceStore(store.DirectoryPath);
             appSettings = new AppSettingsStore(store.DirectoryPath);
+            updates = new WindowsUpdateManager(store.DirectoryPath);
             exitRequestTimer.Tick += (s, e) =>
             {
                 exitRequestTimer.Stop();
@@ -64,7 +69,7 @@ namespace SalaryDesktop
                 closeDialogOpen = false;
                 if (ConfirmNativeExit()) { closeConfirmed = true; Close(); }
             };
-            FormClosed += (s, e) => exitRequestTimer.Dispose();
+            FormClosed += (s, e) => { exitRequestTimer.Dispose(); updates.Dispose(); if (updateHelper != null) updateHelper.Dispose(); };
             web.Dock = DockStyle.Fill;
             Controls.Add(web);
             Shown += async (s, e) => await InitializeAsync();
@@ -82,6 +87,7 @@ namespace SalaryDesktop
         {
             base.OnFormClosing(e);
             if (e.Cancel) return;
+            if (installExitApproved && activeOperations == 0 && !captureRunning && writeGate.CurrentCount > 0) return;
             var action = ClosePolicy.Decide(e.CloseReason, HasPendingWork, closeDialogOpen, closeConfirmed, appSettings.ConfirmExit);
             if (action == CloseAction.Allow) return;
             e.Cancel = true;
@@ -270,7 +276,18 @@ namespace SalaryDesktop
                 case "pickDataFile": return PickFile();
                 case "exportDataFile": return ExportFile(args);
                 case "checkForUpdates":
-                    using (var updates = new ReleaseClient()) return await updates.CheckAsync();
+                    using (var releaseClient = new ReleaseClient()) return await releaseClient.CheckAsync();
+                case "getUpdateDownloadStatus": return updates.Status;
+                case "downloadUpdate": return await updates.DownloadAsync(StringArg(args, "version"));
+                case "cancelUpdateDownload": updates.Cancel(); return new { };
+                case "installUpdate":
+                    if (captureRunning || activeOperations > 1 || writeGate.CurrentCount == 0) throw new UserError("正在处理数据，请稍后安装。");
+                    var updateVersion = StringArg(args, "version");
+                    var metadata = await Task.Run(() => updates.Ready(updateVersion));
+                    updateHelper = UpdateHandoff.Start(metadata, updates.ReadyPath(updateVersion), store.DirectoryPath);
+                    installExitApproved = true;
+                    BeginInvoke(new Action(CloseForUpdateWhenIdle));
+                    return new { state = "installer-opened" };
                 case "openExternal":
                     ReleaseClient.OpenExternal(StringArg(args, "url"));
                     return new { };
@@ -294,6 +311,23 @@ namespace SalaryDesktop
                 default: throw new UserError("此操作不受支持。");
             }
         }
+        private async void CloseForUpdateWhenIdle()
+        {
+            for (var attempt = 0; attempt < 300 && !IsDisposed; attempt++)
+            {
+                await Task.Delay(100);
+                if (activeOperations == 0 && !captureRunning && writeGate.CurrentCount > 0)
+                {
+                    Close();
+                    return;
+                }
+            }
+            installExitApproved = false;
+            try { if (updateHelper != null && !updateHelper.HasExited) updateHelper.Kill(); }
+            catch (InvalidOperationException) { }
+            if (!IsDisposed) MessageBox.Show(this, "仍有数据正在处理，安装未启动。请完成当前操作后重试更新。", "薪迹", MessageBoxButtons.OK, MessageBoxIcon.Information);
+        }
+
         private async Task<object> CapturePageAsync()
         {
             if (captureRunning) throw new UserError("正在读取工资页，请稍候。");

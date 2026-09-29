@@ -14,10 +14,24 @@ const calls = [], errors = [], checks = [];
 let reply = { status: 404, content: null };
 const nextVersion = `${Number(version.split(".")[0]) + 1}.0.0`;
 const releaseUrl = `https://github.com/flycodeu/mysalary/releases/download/v${nextVersion}/salary-${nextVersion}-windows-setup.exe`;
+let downloadState = { state: "idle" };
+let finishDownload;
 await context.exposeFunction("__salaryTestHost", async ({ method, args }) => {
   calls.push({ method, args });
   if (method === "loadLedger") return { content: null };
   if (method === "checkForUpdates") return reply;
+  if (method === "getUpdateDownloadStatus") return downloadState;
+  if (method === "downloadUpdate") {
+    downloadState = { state: "downloading", version: args.version, receivedBytes: 25, totalBytes: 100 };
+    return new Promise((resolve) => { finishDownload = resolve; });
+  }
+  if (method === "cancelUpdateDownload") {
+    downloadState = { state: "idle" };
+    finishDownload?.(downloadState);
+    finishDownload = undefined;
+    return {};
+  }
+  if (method === "installUpdate") return { state: "installer-opened" };
   if (method === "openExternal") return {};
   throw new Error(`Unexpected test method: ${method}`);
 });
@@ -52,10 +66,25 @@ try {
   }] }) };
   await page.getByRole("button", { name: "重新检查" }).click();
   await page.getByText(`发现新版本 ${nextVersion}`, { exact: true }).waitFor();
-  await page.getByRole("button", { name: "获取新版", exact: true }).click();
-  assert.deepEqual(calls.find(({ method }) => method === "openExternal")?.args, { url: releaseUrl });
-  assert.equal(calls.some(({ method }) => /save|install|delete/i.test(method)), false);
-  checks.push("matching_installer_opens_through_native_host_without_touching_ledger");
+  await page.getByRole("button", { name: "立即更新", exact: true }).click();
+  await page.locator("[role='progressbar'][aria-valuenow='25']").waitFor();
+  assert.equal(await page.getByRole("button", { name: "关闭", exact: true }).isDisabled(), true);
+  assert.equal(calls.some(({ method }) => method === "openExternal"), false);
+  checks.push("windows_download_progress_stays_inside_app_and_blocks_exit");
+  await page.getByRole("button", { name: "取消下载", exact: true }).click();
+  await page.getByRole("button", { name: "立即更新", exact: true }).waitFor();
+  assert.equal(calls.some(({ method }) => method === "installUpdate"), false);
+  checks.push("windows_download_can_cancel_without_opening_installer");
+  await page.getByRole("button", { name: "立即更新", exact: true }).click();
+  await page.getByRole("button", { name: "取消下载", exact: true }).waitFor();
+  downloadState = { state: "ready", version: nextVersion, receivedBytes: 100, totalBytes: 100 };
+  finishDownload(downloadState);
+  finishDownload = undefined;
+  await page.getByRole("button", { name: "继续安装", exact: true }).waitFor();
+  for (let attempt = 0; attempt < 40 && !calls.some(({ method }) => method === "installUpdate"); attempt++) await page.waitForTimeout(50);
+  assert.deepEqual(calls.filter(({ method }) => method === "installUpdate").map(({ args }) => args), [{ version: nextVersion }]);
+  assert.equal(calls.some(({ method }) => /saveLedger|restoreLedger|webdavPublish/.test(method)), false);
+  checks.push("matching_verified_installer_handoff_does_not_touch_ledger");
   await page.getByText("更新内容", { exact: true }).click();
   assert.match(await page.locator(".update-notes pre").innerText(), /<script>/);
   assert.equal(await page.locator(".update-notes script").count(), 0);
@@ -73,7 +102,7 @@ try {
   reply = { status: 503, content: null };
   await page.getByRole("button", { name: "重新检查" }).click();
   await page.getByText("暂时无法连接更新服务，请稍后重试", { exact: true }).waitFor();
-  assert.equal(await page.getByRole("button", { name: "获取新版", exact: true }).count(), 0);
+  assert.equal(await page.getByRole("button", { name: "立即更新", exact: true }).count(), 0);
   checks.push("network_error_clears_previous_offer_and_allows_retry");
   await page.getByRole("button", { name: "关闭", exact: true }).click();
   await page.getByRole("heading", { name: "还没有工资档案" }).waitFor();
@@ -87,4 +116,3 @@ try {
   await writeFile(new URL("checks.json", output), JSON.stringify(evidence, null, 2));
   console.log(JSON.stringify(evidence));
 } finally { await context.close(); await browser.close(); }
-

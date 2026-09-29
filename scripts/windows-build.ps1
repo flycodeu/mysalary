@@ -79,5 +79,13 @@ if ($Test) {
     if ($testProcess.ExitCode -ne 0) { throw 'Windows collector self-test failed.' }
     $desktopTest = Start-Process -FilePath $desktopExe -ArgumentList '--self-test' -Wait -PassThru -WindowStyle Hidden
     if ($desktopTest.ExitCode -ne 0) { throw 'Windows desktop self-test failed.' }
+    $helperTest = Join-Path $generatedDirectory 'helper-isolation'
+    New-Item -ItemType Directory -Force -Path $helperTest | Out-Null
+    Copy-Item -LiteralPath $desktopExe -Destination (Join-Path $helperTest 'SalaryUpdater.exe') -Force
+    foreach ($dependency in @('Microsoft.Web.WebView2.Core.dll', 'Microsoft.Web.WebView2.WinForms.dll', 'WebView2Loader.dll')) {
+        Copy-Item -LiteralPath (Join-Path $outDir $dependency) -Destination $helperTest -Force
+    }
+    $helperProcess = Start-Process -FilePath (Join-Path $helperTest 'SalaryUpdater.exe') -ArgumentList '--install-update invalid' -Wait -PassThru -WindowStyle Hidden
+    if ($helperProcess.ExitCode -ne 2) { throw 'Isolated Windows update helper did not start safely.' }
 }
 Get-Item $desktopExe, $exe | Select-Object FullName, Length

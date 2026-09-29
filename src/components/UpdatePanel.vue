@@ -42,7 +42,7 @@ async function launchRelease(url: string) {
   finally { installing.value = false; }
 }
 async function refreshDownloadState() {
-  if (!isAndroid || readingStatus) return;
+  if (!isNative || readingStatus) return;
   readingStatus = true;
   try { downloadState.value = await getUpdateDownloadStatus(); }
   catch { /* Explicit actions surface errors; a transient progress read is retried. */ }
@@ -62,7 +62,7 @@ async function openInstaller(version: string) {
 }
 async function updateNow() {
   const release = result.value;
-  if (!isAndroid || props.blocked || checking.value || release?.state !== "available" || !release.download || working.value) return;
+  if (!isNative || props.blocked || checking.value || release?.state !== "available" || !release.download || working.value) return;
   actionError.value = "";
   requesting.value = true;
   downloadState.value = { state: "downloading", version: release.version };
@@ -88,7 +88,7 @@ async function cancelDownload() {
 }
 async function installReady() {
   const version = downloadState.value.version;
-  if (!isAndroid || !ready.value || !version || working.value || props.blocked) return;
+  if (!isNative || !ready.value || !version || working.value || props.blocked) return;
   installing.value = true;
   actionError.value = "";
   try { await openInstaller(version); }
@@ -120,7 +120,7 @@ onBeforeUnmount(() => { stopProgressPolling(); emit("working", false); });
       <template v-else-if="result?.state === 'available'">
         <h3>发现新版本 {{ result.version }}</h3>
         <p v-if="isAndroid && result.download">下载完成后，按系统提示覆盖安装。工资和截图会保留。</p>
-        <p v-else-if="isNative && result.download">运行安装包覆盖升级，工资和截图会保留。</p>
+        <p v-else-if="isNative && result.download">应用会下载并校验安装包，然后退出并打开安装器。工资和截图会保留。</p>
         <p v-else>前往发行页面查看更新内容和可用安装包。</p>
         <details v-if="result.notes" class="update-notes"><summary>更新内容</summary><pre>{{ result.notes }}</pre></details>
       </template>
@@ -128,10 +128,10 @@ onBeforeUnmount(() => { stopProgressPolling(); emit("working", false); });
     </div>
     <div class="sheet-actions">
       <button class="secondary-button" :disabled="checking || working" @click="check"><AppIcon name="sync" />重新检查</button>
-      <button v-if="isAndroid && downloading" class="secondary-button" @click="cancelDownload"><AppIcon name="close" />取消下载</button>
+      <button v-if="isNative && downloading" class="secondary-button" @click="cancelDownload"><AppIcon name="close" />取消下载</button>
       <template v-else-if="result?.state === 'available'">
-        <button v-if="isAndroid && result.download && ready" class="primary-button" :disabled="installing || blocked" @click="installReady"><AppIcon name="download" />{{ installing ? '正在打开安装' : '继续安装' }}</button>
-        <button v-else-if="isAndroid && result.download" class="primary-button" :disabled="working || blocked" @click="updateNow"><AppIcon name="download" />立即更新</button>
+        <button v-if="isNative && result.download && ready" class="primary-button" :disabled="installing || blocked" @click="installReady"><AppIcon name="download" />{{ installing ? '正在打开安装' : '继续安装' }}</button>
+        <button v-else-if="isNative && result.download" class="primary-button" :disabled="working || blocked" @click="updateNow"><AppIcon name="download" />立即更新</button>
         <button v-else class="primary-button" :disabled="working || blocked" @click="launchRelease(result.url)"><AppIcon name="download" />{{ result.download ? '获取新版' : '查看发行版' }}</button>
       </template>
       <button v-else class="text-button" :disabled="working || blocked" @click="launchRelease(RELEASES_URL)">发行页面<AppIcon name="arrow" /></button>

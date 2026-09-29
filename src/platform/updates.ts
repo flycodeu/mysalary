@@ -13,21 +13,21 @@ export type DownloadUpdateStatus = {
 };
 
 export function getUpdateDownloadStatus(): Promise<DownloadUpdateStatus> {
-  if (!isAndroid) return Promise.resolve({ state: "idle" });
+  if (!isAndroid && !isWindows) return Promise.resolve({ state: "idle" });
   return hostCall<DownloadUpdateStatus>("getUpdateDownloadStatus");
 }
 
 export function downloadUpdate(version: string): Promise<DownloadUpdateStatus> {
-  if (!isAndroid) return Promise.reject(new Error("当前平台不支持应用内安装"));
+  if (!isAndroid && !isWindows) return Promise.reject(new Error("当前平台不支持应用内安装"));
   return hostCall<DownloadUpdateStatus>("downloadUpdate", { version });
 }
 
 export async function cancelUpdateDownload(): Promise<void> {
-  if (isAndroid) await hostCall("cancelUpdateDownload");
+  if (isAndroid || isWindows) await hostCall("cancelUpdateDownload");
 }
 
 export function installUpdate(version: string): Promise<{ state: "installer-opened" | "permission-required" }> {
-  if (!isAndroid) return Promise.reject(new Error("当前平台不支持应用内安装"));
+  if (!isAndroid && !isWindows) return Promise.reject(new Error("当前平台不支持应用内安装"));
   return hostCall("installUpdate", { version });
 }
 

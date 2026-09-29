@@ -1,6 +1,6 @@
 # 薪迹
 
-轻量的个人工资档案应用。Windows 从已打开的飞书工资页读取数据，Windows 和 Android 共用工资明细、原始截图及年度看板，支持 JSON 和坚果云同步。当前版本 **0.5.0**。
+轻量的个人工资档案应用。Windows 从已打开的飞书工资页读取数据，Windows 和 Android 共用工资明细、原始截图及年度看板，支持 JSON 和坚果云同步。当前版本 **0.5.1**。
 
 ## 安装与使用
 
@@ -8,9 +8,9 @@
 
 | 平台 | 文件 | 要求 |
 | --- | --- | --- |
-| Windows | `salary-0.5.0-windows-setup.exe` | Windows 10 1809+/11 x64、.NET Framework 4.8、WebView2 Evergreen |
-| Windows 便携版 | `salary-0.5.0-windows.zip` | 完整解压后打开 `Salary.exe` |
-| Android | `salary-0.5.0-debug.apk` | Android 7+；当前为自用调试签名发行线 |
+| Windows | `salary-0.5.1-windows-setup.exe` | Windows 10 1809+/11 x64、.NET Framework 4.8、WebView2 Evergreen |
+| Windows 便携版 | `salary-0.5.1-windows.zip` | 完整解压后打开 `Salary.exe` |
+| Android | `salary-0.5.1-debug.apk` | Android 7+；当前为自用调试签名发行线 |
 
 1. Windows 安装时可选择位置，之后从开始菜单打开“薪迹”。
 2. 在电脑飞书的“智慧 HR → 工资查询”展开月份，回到薪迹点击“抓取飞书工资”。仅采集已展开、字段完整的月份。
@@ -53,7 +53,7 @@ Windows 数据位于 `%LOCALAPPDATA%\SalaryTrail\Desktop`，与安装目录分�
 打开设置时自动查询本仓库最新正式 Release，发现新版本会显示版本提示，也可重新检查。启动时不自动联网，更新检查不上传工资或凭据。
 
 - **Android**：点击“立即更新”，应用内下载并校验 APK，再打开系统安装器，由用户确认覆盖安装。不要先卸载旧版。
-- **Windows**：点击“获取新版”，浏览器下载对应安装包，运行后覆盖升级；当前未实现应用内下载和自动安装。
+- **Windows**：点击“立即更新”，应用内显示下载进度，可取消或重试。下载后核对 GitHub Release 的 SHA-256 摘要；校验通过后应用退出并打开安装器，按安装器提示覆盖升级。原安装目录及本机档案保留。
 - 进行保存或同步时不能开始安装；进入安装前等待账本写入完成。网络失败、无公开发行版和已是最新版分别提示，失败检查不会保留过期的更新提示。
 
 Windows 固定 `AppId=FlyLabs.SalaryTrail`，沿用安装目录、卸载项和数据目录。Android 固定 `com.flylabs.salary`，保持签名并递增 `versionCode`。当前只选择 `debug.apk` 发行线，原调试密钥须备份；更换签名无法覆盖旧安装。
@@ -101,6 +101,6 @@ ForgeFlow 通过 `scripts/forgeflow-sync.mjs` 的 API 与版本校验维护设�
 
 1. **先验证数据连续性**：真实 Windows/Android 往返同步、弱网重试、重启及带截图的覆盖升级，自动比对原图哈希与工资记录。
 2. **完整离线备份**：导出包含账本和原图的归档包，支持校验恢复及换机；目前 JSON 不能单独备份截图。
-3. **简化 Windows 更新**：应用内下载、校验和启动安装器，保留用户确认与数据目录。
+3. **验证 Windows 更新实机流程**：在已安装的旧版上检查进度、取消、安装器交接和覆盖升级后档案完整性。
 4. **提升对账效率**：增加缺少原图、缺少月份和未解释差额的筛选；看板可继续扩展同比与月度构成。
 5. **再评估手机直接采集**：必须在目标真机验证 HR 页面可访问内容、字段完整性与授权流程；不以桌面可读取作为手机可行的依据。
