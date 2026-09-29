@@ -6,9 +6,12 @@ import { salaryGroups } from "../domain/salaryRules";
 import { imageUrl, type ArchiveItem } from "../platform/archive";
 import AppIcon from "./AppIcon.vue";
 import ModalSheet from "./ModalSheet.vue";
+import EvidencePanel from "./EvidencePanel.vue";
 const props = defineProps<{ item: ArchiveItem; masked: boolean }>();
-defineEmits<{ close: []; remove: [] }>();
+defineEmits<{ close: []; remove: []; working: [busy: boolean]; evidenceChanged: [count: number] }>();
 const showSource = ref(false);
+const showEvidence = ref(false);
+const evidenceCount = ref(0);
 const draft = computed(() => props.item.draft);
 const result = computed(() =>
   draft.value ? reconcile(draft.value) : undefined,
@@ -252,6 +255,11 @@ function money(value: number | null | undefined) {
         </template>
       </div>
     </details></div>
+    <button v-if="!item.demo" class="detail-evidence-entry" @click="showEvidence = true">
+      <span class="detail-evidence-icon"><AppIcon name="image" /></span>
+      <span><strong>原始截图</strong><small>{{ evidenceCount ? `${evidenceCount} 张已保存` : "保存公司工资页，留作核对" }}</small></span>
+      <span class="detail-evidence-action">{{ evidenceCount ? "查看" : "添加" }}<AppIcon name="arrow" /></span>
+    </button>
     <p v-if="!draft" class="muted legacy-empty">
       这份档案尚无工资数据，可查看已保存的来源。
     </p>
@@ -275,5 +283,11 @@ function money(value: number | null | undefined) {
         <img :src="imageUrl(item)" alt="已保存的工资原图" />
       </div>
     </ModalSheet>
+    <EvidencePanel v-if="!item.demo" :open="showEvidence" :record-id="item.id" :title="monthLabel" :masked="masked" @close="showEvidence = false" @working="$emit('working', $event)" @changed="evidenceCount = $event; $emit('evidenceChanged', $event)" />
   </section>
 </template>
+
+<style scoped>
+.detail-evidence-entry { display: flex; align-items: center; gap: 12px; width: 100%; margin: 20px 0 4px; padding: 15px 16px; border: 1px solid var(--line); border-radius: var(--radius); text-align: left; }
+.detail-evidence-entry:hover { background: var(--subtle); }.detail-evidence-icon { display: grid; place-items: center; width: 40px; height: 40px; border-radius: var(--radius-sm); background: var(--accent-soft); color: var(--accent); }.detail-evidence-entry strong { display: block; font-size: 14px; font-weight: 600; }.detail-evidence-entry small { display: block; color: var(--muted); font-size: 12px; margin-top: 3px; }.detail-evidence-action { display: flex; align-items: center; gap: 5px; margin-left: auto; color: var(--muted); font-size: 13px; flex-shrink: 0; }.detail-evidence-action > svg { width: 17px; height: 17px; }
+</style>
