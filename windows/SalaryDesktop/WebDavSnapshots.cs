@@ -110,6 +110,12 @@ namespace SalaryDesktop
         }
         internal static List<string> ParseListing(string content)
         {
+            var names = ParseListingNames(content, name => name == "archive-v1.json" || DeltaName.IsMatch(name));
+            if (names.Count(n => DeltaName.IsMatch(n)) > MaxDeltaFiles) throw new UserError("云端增量超过 1200 个，请先整理备份。");
+            return names;
+        }
+        private static List<string> ParseListingNames(string content, Func<string, bool> include)
+        {
             try
             {
                 using (var reader = XmlReader.Create(new StringReader(content), new XmlReaderSettings { DtdProcessing = DtdProcessing.Prohibit, XmlResolver = null, MaxCharactersInDocument = MaxListingBytes }))
@@ -124,12 +130,11 @@ namespace SalaryDesktop
                         if (hrefs.Count != 1) throw new UserError("云端文件地址不明确，已停止同步。");
                         var name = ListingName(hrefs[0].Value);
                         if (name == null) continue;
-                        if (name != "archive-v1.json" && !DeltaName.IsMatch(name)) continue;
+                        if (!include(name)) continue;
                         var valid = response.Elements(dav + "propstat").Where(p => Regex.IsMatch((string)p.Element(dav + "status") ?? "", @"^HTTP/[0-9.]+ 200(?: |$)")).ToList();
                         if (valid.Count == 0 || valid.Any(p => p.Descendants(dav + "collection").Any())) throw new UserError("云端档案属性无法读取，已停止同步。");
                         if (!names.Add(name)) throw new UserError("云端档案列表重复，已停止同步。");
                     }
-                    if (names.Count(n => DeltaName.IsMatch(n)) > MaxDeltaFiles) throw new UserError("云端增量超过 1200 个，请先整理备份。");
                     return names.OrderBy(n => n, StringComparer.Ordinal).ToList();
                 }
             }

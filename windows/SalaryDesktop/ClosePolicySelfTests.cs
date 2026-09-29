@@ -16,6 +16,9 @@ namespace SalaryDesktop
                 Assert(ClosePolicy.Decide(reason, true, false, true) == CloseAction.Busy);
                 Assert(ClosePolicy.Decide(reason, false, true, false) == CloseAction.KeepOpen);
                 Assert(ClosePolicy.Decide(reason, true, true, false) == CloseAction.KeepOpen);
+                Assert(ClosePolicy.Decide(reason, false, false, false, false) == CloseAction.Allow);
+                Assert(ClosePolicy.Decide(reason, true, false, false, false) == CloseAction.Busy);
+                Assert(ClosePolicy.Decide(reason, false, true, false, false) == CloseAction.KeepOpen);
             }
             foreach (var reason in new[] { CloseReason.WindowsShutDown, CloseReason.TaskManagerClosing })
             {

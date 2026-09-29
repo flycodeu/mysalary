@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from "vue";
+import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { formatMoney } from "./domain/money";
 import { monthlyOverview } from "./domain/overview";
 import { createDemo, type ArchiveItem } from "./platform/archive";
@@ -10,8 +10,13 @@ import SalaryDetail from "./components/SalaryDetail.vue";
 import ModalSheet from "./components/ModalSheet.vue";
 import SyncPanel from "./components/SyncPanel.vue";
 import UpdatePanel from "./components/UpdatePanel.vue";
+import SettingsPanel from "./components/SettingsPanel.vue";
+import SalaryDashboard from "./components/SalaryDashboard.vue";
+import { useUpdateCheck } from "./composables/useUpdateCheck";
+import { listEvidence } from "./platform/evidence";
 import { appVersion } from "./platform/updates";
 import { hostCall, isAndroid, isNative, isWindows } from "./platform/host";
+import { loadAppSettings, saveAppSettings } from "./platform/settings";
 
 const fileInput = ref<HTMLInputElement>();
 const {
@@ -33,7 +38,7 @@ const {
   years,
   retryArchive,
   recover,
-  afterSync,
+  afterSync: refreshArchiveAfterSync,
   filesChanged,
   removeArchive,
   restoreArchive,
@@ -44,32 +49,72 @@ const {
 const showMenu = ref(false);
 const showSync = ref(false);
 const showUpdates = ref(false);
+const showSettings = ref(false);
+const pageTab = ref<"archive" | "dashboard">("archive");
+const evidenceBusy = ref(false);
+const updating = ref(false);
+const evidenceCounts = ref<Record<string, number>>({});
+const { label: updateLabel, available: updateAvailable, checking: checkingUpdates, check: checkSettingsUpdate } = useUpdateCheck();
+watch(showSettings, (open) => { if (open) void checkSettingsUpdate(); });
+const confirmExit = ref(true);
+const settingsSaving = ref(false);
+const settingsError = ref("");
 const masked = ref(false);
 const showExit = ref(false);
 const exiting = ref(false);
 const navigation = useBackNavigation({
-  blocked: computed(() => operationBlocked.value || exiting.value),
+  blocked: computed(() => operationBlocked.value || exiting.value || settingsSaving.value || evidenceBusy.value || updating.value),
   page: computed(() => selected.value ? "detail" : showDeleted.value ? "deleted" : "root"),
   back: () => {
     if (selected.value) selected.value = undefined;
     else showDeleted.value = false;
   },
-  root: () => { if (isAndroid) showExit.value = true; },
+  root: () => { if (isAndroid) requestExit(); },
 });
 const backState = navigation.state;
 const backGesture = navigation.gesture;
 async function exitApp() {
-  if (!isAndroid || operationBlocked.value || exiting.value) return;
+  if (!isNative || operationBlocked.value || exiting.value || settingsSaving.value || evidenceBusy.value || updating.value) return;
   exiting.value = true;
   try { await hostCall("exitApp"); }
-  catch { error.value = "退出未完成，请重试"; }
+  catch { error.value = "退出未完成，请重试"; cancelExit(); }
   finally { exiting.value = false; showExit.value = false; }
 }
+function requestExit() {
+  if (isWindows) void hostCall("acknowledgeExitRequest").catch(() => {});
+  if (operationBlocked.value || exiting.value || settingsSaving.value || evidenceBusy.value || updating.value) { cancelExit(); return; }
+  if (confirmExit.value) showExit.value = true;
+  else void exitApp();
+}
+function cancelExit() {
+  showExit.value = false;
+  if (isWindows) void hostCall("cancelAppExit").catch(() => {});
+}
+async function changeConfirmExit(enabled: boolean) {
+  if (settingsSaving.value) return;
+  settingsSaving.value = true;
+  settingsError.value = "";
+  try {
+    await saveAppSettings({ confirmExit: enabled });
+    confirmExit.value = enabled;
+  } catch { settingsError.value = "设置未保存，请重试"; }
+  finally { settingsSaving.value = false; }
+}
+onMounted(async () => {
+  window.addEventListener("salary:request-exit", requestExit);
+  try { confirmExit.value = (await loadAppSettings()).confirmExit; }
+  catch { settingsError.value = "设置暂时无法读取，退出确认已保持开启"; }
+  if (isWindows) void hostCall("setExitHandlerReady", { ready: true }).catch(() => {});
+});
+onBeforeUnmount(() => {
+  window.removeEventListener("salary:request-exit", requestExit);
+  if (isWindows) void hostCall("setExitHandlerReady", { ready: false }).catch(() => {});
+});
 function updateDesktopBusy() {
   // Older desktop hosts may not implement this advisory message yet.
-  if (isWindows) void hostCall("setAppBusy", { busy: operationBlocked.value }).catch(() => {});
+  if (isWindows) void hostCall("setAppBusy", { busy: operationBlocked.value || settingsSaving.value || evidenceBusy.value || updating.value }).catch(() => {});
 }
-watch(operationBlocked, updateDesktopBusy, { immediate: true, flush: "sync" });
+watch([operationBlocked, settingsSaving, evidenceBusy, updating], updateDesktopBusy, { immediate: true, flush: "sync" });
 onMounted(updateDesktopBusy);
 
 const recent = computed(() =>
@@ -103,11 +148,34 @@ const visible = computed(() =>
 );
 // Desktop can preview the first archive without entering the mobile detail screen.
 const detailItem = computed(() =>
-  selected.value ?? (showDeleted.value ? undefined : visible.value[0]),
+  selected.value ?? (showDeleted.value || pageTab.value === "dashboard" ? undefined : visible.value[0]),
 );
+let evidenceListing = 0;
+async function refreshEvidenceCounts(force = false) {
+  const request = ++evidenceListing;
+  await Promise.all(active.value.map(async (item) => {
+    if (!force && evidenceCounts.value[item.id] !== undefined) return;
+    try {
+      const images = await listEvidence(item.id);
+      if (request === evidenceListing) evidenceCounts.value[item.id] = images.length;
+    } catch { /* Keep the last known count if the native store is temporarily unavailable. */ }
+  }));
+}
+watch(active, () => { void refreshEvidenceCounts(); });
+async function afterSync() {
+  await refreshArchiveAfterSync();
+  // Image sync can add files to an unchanged salary record, including after a partial sync.
+  await refreshEvidenceCounts(true);
+}
+function openDashboardRecord(item: ArchiveItem) {
+  pageTab.value = "archive";
+  showDeleted.value = false;
+  year.value = "";
+  selected.value = item;
+}
 watch(year, () => {
   selected.value = undefined;
-});
+}, { flush: "sync" });
 const sections = computed(() => {
   const result = new Map<string, ArchiveItem[]>();
   for (const item of visible.value) {
@@ -152,6 +220,7 @@ function exportFile() {
 }
 function showDemo() {
   showMenu.value = false;
+  pageTab.value = "archive";
   selected.value = createDemo();
 }
 </script>
@@ -168,6 +237,7 @@ function showDemo() {
         @click="
           selected = undefined;
           showDeleted = false;
+          pageTab = 'archive';
         "
       >
         <img class="brand-mark" src="/brand.svg" alt="" /><span>薪迹</span>
@@ -210,6 +280,11 @@ function showDemo() {
         </button>
       </div>
     </header>
+    <nav class="page-tabs" role="tablist" aria-label="主导航">
+      <button role="tab" :aria-selected="pageTab === 'archive'" :disabled="operationBlocked || evidenceBusy" @click="pageTab = 'archive'; selected = undefined; showDeleted = false"><AppIcon name="file" />工资档案</button>
+      <button role="tab" :aria-selected="pageTab === 'dashboard'" :disabled="operationBlocked || evidenceBusy" @click="pageTab = 'dashboard'; selected = undefined; showDeleted = false"><AppIcon name="dashboard" />看板</button>
+      <button class="nav-settings" title="设置" aria-label="打开设置" :disabled="operationBlocked || evidenceBusy" @click="showSettings = true"><AppIcon name="settings" /><span class="settings-nav-label">设置</span><i v-if="updateAvailable" class="update-dot" aria-label="有新版本" /></button>
+    </nav>
     <div v-if="error" class="alert error-alert" role="alert">
       <span>{{ error }}</span
       ><button
@@ -255,7 +330,9 @@ function showDemo() {
         @click="notice = ''"
       ><AppIcon name="close" /></button>
     </div>
+    <SalaryDashboard v-if="pageTab === 'dashboard' && !showDeleted && !selected" :items="active" :masked="masked" @open="openDashboardRecord" />
     <main
+      v-else
       class="workspace"
       :data-storage-state="storageState"
       :class="{ 'has-detail': detailItem, 'detail-selected': selected }"
@@ -385,6 +462,7 @@ function showDemo() {
                 }}<small>月</small></span
               >
               <span v-if="sourceLabel(item)" class="archive-item-text">{{ sourceLabel(item) }}</span>
+              <span v-if="evidenceCounts[item.id]" class="record-evidence" :aria-label="`${evidenceCounts[item.id]} 张原始截图`"><AppIcon name="image" /></span>
               <span class="archive-item-amount">{{
                 money(item.draft?.statedNetMinor)
               }}</span
@@ -420,6 +498,8 @@ function showDemo() {
       :masked="masked"
       @close="selected = undefined"
       @remove="deleteTarget = detailItem"
+      @working="evidenceBusy = $event"
+      @evidence-changed="evidenceCounts[detailItem.id] = $event"
     />
     </main>
     <ModalSheet :open="showMenu" title="更多" @close="showMenu = false">
@@ -456,10 +536,25 @@ function showDemo() {
         <button @click="showMenu = false; showUpdates = true">
           <AppIcon name="sync" />检查更新<span class="muted">{{ appVersion }}</span>
         </button>
+        <button @click="showMenu = false; showSettings = true">
+          <AppIcon name="settings" />设置
+        </button>
       </div>
       <p v-if="!isNative" class="preview-label">网页预览 · 数据保存在此浏览器</p>
     </ModalSheet>
-    <UpdatePanel :open="showUpdates" @close="showUpdates = false" />
+    <UpdatePanel :open="showUpdates" :blocked="operationBlocked || evidenceBusy || settingsSaving" @close="showUpdates = false" @working="updating = $event" />
+    <SettingsPanel
+      :open="showSettings"
+      :confirm-exit="confirmExit"
+      :saving="settingsSaving"
+      :error="settingsError"
+      :update-label="updateLabel"
+      :update-available="updateAvailable"
+      :checking-updates="checkingUpdates"
+      @close="showSettings = false"
+      @change-confirm-exit="changeConfirmExit"
+      @update="showSettings = false; showUpdates = true"
+    />
     <SyncPanel
       :open="showSync"
       :legacy-count="legacyCount"
@@ -514,17 +609,26 @@ function showDemo() {
         </button>
       </div>
     </ModalSheet>
-    <ModalSheet :open="showExit" title="退出薪迹？" :busy="operationBlocked || exiting" @close="showExit = false">
+    <ModalSheet :open="showExit" title="退出薪迹？" centered :busy="operationBlocked || exiting || settingsSaving" @close="cancelExit">
       <p class="delete-description">退出后，工资档案仍保存在本机。</p>
       <div class="sheet-actions">
-        <button class="secondary-button" :disabled="operationBlocked || exiting" @click="showExit = false">继续使用</button>
-        <button class="primary-button" :disabled="operationBlocked || exiting" @click="exitApp">退出应用</button>
+        <button class="secondary-button" :disabled="operationBlocked || exiting || settingsSaving" @click="cancelExit">继续使用</button>
+        <button class="primary-button" :disabled="operationBlocked || exiting || settingsSaving" @click="exitApp">退出应用</button>
       </div>
     </ModalSheet>
   </div>
 </template>
 
 <style scoped>
+.page-tabs { display: flex; align-items: center; gap: 8px; border-bottom: 1px solid var(--line); padding-bottom: 12px; }
+.page-tabs > button { display: inline-flex; align-items: center; gap: 8px; padding: 10px 16px; border-radius: var(--radius-sm); color: var(--muted); font-size: 14px; }
+.page-tabs > button[aria-selected="true"] { background: var(--accent-soft); color: var(--accent); font-weight: 650; }
+.page-tabs > button:hover { background: var(--subtle); }
+.page-tabs > .nav-settings { margin-left: auto; padding: 10px; }
+.page-tabs svg, .record-evidence svg { width: 18px; height: 18px; }
+.record-evidence { color: var(--muted); }
+.update-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--accent); }
+@media (max-width: 420px) { .page-tabs > button { padding: 10px 12px; }.settings-nav-label { display: none; } }
 :global(html) { overscroll-behavior-x: none; }
 .back-gesture {
   position: fixed;

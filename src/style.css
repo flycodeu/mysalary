@@ -726,6 +726,13 @@ summary::-webkit-details-marker {
 .modal-sheet::backdrop {
   background: #172b225e;
 }
+.modal-sheet.modal-centered {
+  margin: auto;
+  width: min(420px, calc(100% - 40px));
+  max-width: 420px;
+  border-radius: var(--radius-lg);
+  padding: var(--space-6);
+}
 .sheet-header {
   display: flex;
   align-items: center;

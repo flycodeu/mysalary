@@ -2,7 +2,7 @@
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { useModalNavigation } from "../composables/useBackNavigation";
 import AppIcon from "./AppIcon.vue";
-const props = defineProps<{ open: boolean; title: string; busy?: boolean }>();
+const props = defineProps<{ open: boolean; title: string; busy?: boolean; centered?: boolean }>();
 const emit = defineEmits<{ close: [] }>();
 const dialog = ref<HTMLDialogElement>();
 const navigation = useModalNavigation();
@@ -47,6 +47,7 @@ function backdrop(event: MouseEvent) {
   <dialog
     ref="dialog"
     class="modal-sheet"
+    :class="{ 'modal-centered': centered }"
     :aria-label="title"
     :aria-busy="blocked"
     @cancel.prevent="close"

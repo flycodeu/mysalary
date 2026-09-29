@@ -1,6 +1,6 @@
 {
   "name": "salary-archive",
-  "version": "0.4.2",
+  "version": "0.5.0",
   "private": true,
   "packageManager": "pnpm@10.28.0",
   "type": "module",
@@ -14,7 +14,7 @@
     "windows:build": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/windows-build.ps1",
     "version:set": "node scripts/set-version.mjs",
     "release:build": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/release.ps1",
-    "verify:browser": "node scripts/verify-viewer.mjs && node scripts/verify-startup.mjs && node scripts/verify-desktop-sync.mjs && node scripts/verify-updates.mjs && node scripts/verify-navigation.mjs && node scripts/verify-diagnostics.mjs"
+    "verify:browser": "node scripts/verify-viewer.mjs && node scripts/verify-startup.mjs && node scripts/verify-desktop-sync.mjs && node scripts/verify-updates.mjs && node scripts/verify-navigation.mjs && node scripts/verify-diagnostics.mjs && node scripts/verify-exit-settings.mjs && node scripts/verify-evidence-dashboard.mjs && node scripts/verify-settings-updates.mjs"
   },
   "dependencies": {
     "@capacitor/android": "8.5.2",

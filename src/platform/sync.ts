@@ -6,6 +6,8 @@ import {
 } from "../domain/ledger";
 import { hostCall } from "./host";
 import { updateLedger } from "./ledgerStore";
+import { readLedger } from "./ledgerStore";
+import { syncEvidence } from "./evidenceSync";
 
 export interface SyncSettings {
   configured: boolean;
@@ -77,4 +79,18 @@ export function syncNutstore(): Promise<SyncResult> {
   return (syncing ??= performSync().finally(() => {
     syncing = undefined;
   }));
+}
+
+let completeSync: Promise<SyncResult> | undefined;
+export function syncNutstoreWithEvidence(progress?: (done: number, total: number) => void): Promise<SyncResult> {
+  return completeSync ??= (async () => {
+    const result = await syncNutstore();
+    const ledger = await readLedger();
+    try { await syncEvidence(ledger.entries.map((entry) => `ledger-${entry.id}`), progress); }
+    catch (cause) {
+      const reason = cause instanceof Error ? cause.message : "请重试";
+      throw new Error(`工资已同步，截图同步未完成：${reason}`);
+    }
+    return result;
+  })().finally(() => { completeSync = undefined; });
 }

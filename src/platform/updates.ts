@@ -22,8 +22,8 @@ export function downloadUpdate(version: string): Promise<DownloadUpdateStatus> {
   return hostCall<DownloadUpdateStatus>("downloadUpdate", { version });
 }
 
-export function cancelUpdateDownload(): void {
-  if (isAndroid) void hostCall("cancelUpdateDownload").catch(() => undefined);
+export async function cancelUpdateDownload(): Promise<void> {
+  if (isAndroid) await hostCall("cancelUpdateDownload");
 }
 
 export function installUpdate(version: string): Promise<{ state: "installer-opened" | "permission-required" }> {

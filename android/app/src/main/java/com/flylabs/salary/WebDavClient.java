@@ -19,6 +19,9 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
 import java.util.concurrent.TimeUnit;
+import java.util.Arrays;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 /** The host and path are fixed; callers can never send saved credentials to another endpoint. */
 final class WebDavClient {
@@ -30,6 +33,7 @@ final class WebDavClient {
         + "<d:propfind xmlns:d=\"DAV:\"><d:prop><d:resourcetype/></d:prop></d:propfind>").getBytes(StandardCharsets.UTF_8);
     private static final int MAX_PULL_BYTES = 16 * 1024 * 1024;
     private final OkHttpClient client;
+    private static final Pattern EVIDENCE_NAME = Pattern.compile("evidence-([A-Za-z0-9_-]{1,96})-([a-f0-9]{64})\\.(png|jpg)");
 
     WebDavClient() {
         this(new OkHttpClient.Builder().followRedirects(false).followSslRedirects(false)
@@ -39,6 +43,100 @@ final class WebDavClient {
     }
 
     WebDavClient(OkHttpClient client) { this.client = client; }
+
+    static boolean evidenceName(String name) { return name != null && EVIDENCE_NAME.matcher(name).matches(); }
+
+    static String evidenceNameFor(String recordId, String id, String mimeType) throws IOException {
+        EvidenceStore.validateRecordId(recordId);
+        if (id == null || !id.matches("[a-f0-9]{64}")) throw new ImportStore.UserInputException("原图标识无效");
+        if (!("image/png".equals(mimeType) || "image/jpeg".equals(mimeType))) throw new ImportStore.UserInputException("原图格式无效");
+        return "evidence-" + recordId + "-" + id + ("image/png".equals(mimeType) ? ".png" : ".jpg");
+    }
+
+    List<RemoteEvidence> listEvidence(String username, String password) throws IOException {
+        long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(30);
+        Request listing = request(DIRECTORY, username, password).header("Accept", "application/xml").header("Depth", "1")
+            .method("PROPFIND", RequestBody.create(LIST_BODY, XML)).build();
+        List<RemoteEvidence> result = new ArrayList<>();
+        try (Response response = execute(listing, deadline)) {
+            if (response.code() == 404) return result;
+            if (response.code() == 409) {
+                response.close();
+                missingIfParentAbsent(username, password, deadline);
+                return result;
+            }
+            if (response.code() != 207) throw statusError(response.code());
+            ResponseBody body = response.body();
+            if (body == null || body.contentLength() > WebDavListing.MAX_BYTES) throw new ImportStore.UserInputException("云端目录响应超过 1 MiB 或不完整");
+            for (String name : WebDavListing.parseEvidence(decode(readBounded(body.byteStream(), WebDavListing.MAX_BYTES)))) {
+                Matcher match = EVIDENCE_NAME.matcher(name);
+                if (!match.matches()) throw new ImportStore.UserInputException("云端原图名称无效");
+                result.add(new RemoteEvidence(match.group(1), match.group(2), "png".equals(match.group(3)) ? "image/png" : "image/jpeg"));
+            }
+        }
+        requireTimeRemaining(deadline);
+        return result;
+    }
+
+    byte[] getEvidence(String recordId, String id, String mimeType, String username, String password) throws IOException {
+        String name = evidenceNameFor(recordId, id, mimeType);
+        long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(90);
+        byte[] bytes = readEvidence(name, username, password, deadline, false);
+        if (!EvidenceStore.hash(bytes).equals(id)) throw new ImportStore.UserInputException("云端原图校验不一致，未保存到本机");
+        EvidenceStore.inspect(bytes, mimeType);
+        requireTimeRemaining(deadline);
+        return bytes;
+    }
+
+    void putEvidence(String recordId, String id, EvidenceStore.ReadResult original, String username, String password) throws IOException {
+        String name = evidenceNameFor(recordId, id, original.mimeType);
+        if (!EvidenceStore.hash(original.bytes).equals(id)) throw new ImportStore.UserInputException("本机原图校验失败，原文件已保留");
+        EvidenceStore.inspect(original.bytes, original.mimeType);
+        long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(90);
+        Request collection = request(DIRECTORY, username, password).method("MKCOL", RequestBody.create(new byte[0], null)).build();
+        try (Response response = execute(collection, deadline)) {
+            if (response.code() != 201 && response.code() != 405) throw statusError(response.code());
+        }
+        byte[] existing = readEvidence(name, username, password, deadline, true);
+        if (existing != null) {
+            verifyEvidence(existing, original.bytes, id);
+            return;
+        }
+        // Original bytes are immutable. A racing identical upload is accepted only after read-back verification.
+        Request upload = request(DIRECTORY + name, username, password).header("If-None-Match", "*")
+            .put(RequestBody.create(original.bytes, MediaType.get(original.mimeType))).build();
+        try (Response response = execute(upload, deadline)) {
+            if (response.code() != 200 && response.code() != 201 && response.code() != 204 && response.code() != 412) throw statusError(response.code());
+        }
+        verifyEvidence(readEvidence(name, username, password, deadline, false), original.bytes, id);
+        requireTimeRemaining(deadline);
+    }
+
+    private byte[] readEvidence(String name, String username, String password, long deadline, boolean allowMissing) throws IOException {
+        if (!evidenceName(name)) throw new ImportStore.UserInputException("云端原图名称无效");
+        Request download = request(DIRECTORY + name, username, password).header("Accept", "application/octet-stream").get().build();
+        try (Response response = execute(download, deadline)) {
+            if (allowMissing && response.code() == 404) return null;
+            if (response.code() != 200) throw statusError(response.code());
+            ResponseBody body = response.body();
+            if (body == null || body.contentLength() > EvidenceStore.MAX_BYTES) throw new ImportStore.UserInputException("云端原图超过 20 MiB 或不完整");
+            byte[] bytes = readBounded(body.byteStream(), EvidenceStore.MAX_BYTES);
+            if (bytes.length == 0) throw new ImportStore.UserInputException("云端原图为空，已停止同步");
+            return bytes;
+        }
+    }
+
+    private static void verifyEvidence(byte[] downloaded, byte[] original, String id) throws IOException {
+        if (!EvidenceStore.hash(downloaded).equals(id) || !Arrays.equals(downloaded, original))
+            throw new ImportStore.UserInputException("云端已有原图与本机不一致，已停止同步，原文件未覆盖");
+    }
+
+    static final class RemoteEvidence {
+        final String recordId;
+        final String id;
+        final String mimeType;
+        RemoteEvidence(String recordId, String id, String mimeType) { this.recordId = recordId; this.id = id; this.mimeType = mimeType; }
+    }
 
     List<RemoteFile> pull(String username, String password) throws IOException {
         long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(75);

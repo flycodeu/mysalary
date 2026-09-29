@@ -27,6 +27,14 @@ final class WebDavListing {
     private static final String ROOT = "/dav/SalaryTrail/";
 
     static List<String> parse(String xml) throws IOException {
+        return parse(xml, false);
+    }
+
+    static List<String> parseEvidence(String xml) throws IOException {
+        return parse(xml, true);
+    }
+
+    private static List<String> parse(String xml, boolean evidence) throws IOException {
         if (xml.toUpperCase(Locale.ROOT).contains("<!DOCTYPE") || xml.toUpperCase(Locale.ROOT).contains("<!ENTITY")) throw invalid();
         try {
             DocumentBuilderFactory factory = DocumentBuilderFactory.newInstance();
@@ -59,10 +67,17 @@ final class WebDavListing {
                 String name = fileName(href);
                 if (name == null) continue;
                 NodeList collections = response.getElementsByTagNameNS(DAV, "collection");
-                boolean known = "archive-v1.json".equals(name) || deltaName(name);
+                boolean known = evidence ? WebDavClient.evidenceName(name) : "archive-v1.json".equals(name) || deltaName(name);
                 if (!known) continue;
                 if (collections.getLength() != 0) throw invalid();
-                if (names.add(name) && deltaName(name) && ++deltas > MAX_DELTAS) {
+                if (evidence) {
+                    boolean readable = false;
+                    NodeList statuses = response.getElementsByTagNameNS(DAV, "status");
+                    for (int index = 0; index < statuses.getLength(); index++)
+                        if (statuses.item(index).getTextContent().matches("HTTP/[0-9.]+ 200(?: .*)?")) readable = true;
+                    if (!readable || !names.add(name)) throw invalid();
+                    if (names.size() > MAX_DELTAS) throw new ImportStore.UserInputException("云端原图超过 1200 张，请先整理备份");
+                } else if (names.add(name) && deltaName(name) && ++deltas > MAX_DELTAS) {
                     throw new ImportStore.UserInputException("云端工资文件超过 1200 份，请先整理备份后再同步");
                 }
             }

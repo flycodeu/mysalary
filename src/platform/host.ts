@@ -1,7 +1,8 @@
 import { Capacitor, registerPlugin } from "@capacitor/core";
 
 interface DesktopMessage {
-  id: string;
+  id?: string;
+  event?: string;
   result?: unknown;
   error?: string;
 }
@@ -35,6 +36,10 @@ const requests = new Map<
   }
 >();
 function receiveDesktopMessage({ data }: { data: DesktopMessage }) {
+  if (data?.event === "requestExit") {
+    window.dispatchEvent(new Event("salary:request-exit"));
+    return;
+  }
   if (!data || typeof data.id !== "string") return;
   const request = requests.get(data.id);
   if (!request) return;

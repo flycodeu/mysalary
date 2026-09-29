@@ -22,11 +22,13 @@ namespace SalaryDesktop
                 SnapshotSelfTests.RunAsync().GetAwaiter().GetResult();
                 ReleaseSelfTests.RunAsync().GetAwaiter().GetResult();
                 ClosePolicySelfTests.Run();
+                EvidenceSelfTests.Run();
+                WebDavEvidenceSelfTests.RunAsync().GetAwaiter().GetResult();
                 Assert(DesktopForm.IsAppOrigin("https://salary.local/index.html") && !DesktopForm.IsAppOrigin("http://salary.local/index.html") && !DesktopForm.IsAppOrigin("https://salary.local.evil.test") && !DesktopForm.IsAppOrigin("https://salary.local:444") && !DesktopForm.IsAppOrigin("https://user@salary.local"));
                 Console.WriteLine("desktop-self-test=pass;checks=atomic-ledger,corruption-stop,backup-retention,explicit-restore,restore-copy-failure,size-limit,dpapi,credential-clear,origin,webdav-404,missing-parent-409,existing-parent-409,conditional-create,conditional-update,weak-etag,conflict,redirect,auth,rate-limit,response-limit");
                 return 0;
             }
-            catch (Exception) { Console.WriteLine("desktop-self-test=fail"); return 1; }
+            catch (Exception error) { Console.WriteLine("desktop-self-test=fail;type=" + error.GetType().Name + ";stack=" + error.StackTrace); return 1; }
         }
         private static void Storage()
         {
@@ -35,9 +37,19 @@ namespace SalaryDesktop
             {
                 var store = new LocalStore(directory);
                 Assert(store.LoadLedger() == null);
+                var settings = new AppSettingsStore(directory);
+                Assert(settings.ConfirmExit);
+                settings.Save(false);
+                Assert(!new AppSettingsStore(directory).ConfirmExit);
                 store.SaveLedger("{\"version\":1}");
                 store.SaveLedger("{\"version\":2}");
                 Assert(store.LoadLedger() == "{\"version\":2}" && File.ReadAllText(Path.Combine(directory, "archive-v1.json.bak")) == "{\"version\":1}");
+                settings.Save(true);
+                Assert(new AppSettingsStore(directory).ConfirmExit && store.LoadLedger() == "{\"version\":2}");
+                File.WriteAllText(Path.Combine(directory, "app-settings.json"), "invalid");
+                Assert(new AppSettingsStore(directory).ConfirmExit);
+                File.WriteAllText(Path.Combine(directory, "app-settings.json"), "{\"confirmExit\":\"false\"}");
+                Assert(new AppSettingsStore(directory).ConfirmExit);
                 File.WriteAllText(Path.Combine(directory, "archive-v1.json"), "invalid");
                 Assert(Rejects(() => store.LoadLedger()) && File.ReadAllText(Path.Combine(directory, "archive-v1.json.bak")) == "{\"version\":1}");
                 File.Delete(Path.Combine(directory, "archive-v1.json"));

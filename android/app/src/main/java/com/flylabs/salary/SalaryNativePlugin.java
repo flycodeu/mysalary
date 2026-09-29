@@ -24,6 +24,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
 public class SalaryNativePlugin extends Plugin {
     private ImportStore store;
     private LedgerStore ledger;
+    private EvidenceStore evidence;
     private SyncCredentialStore credentials;
     private WebDavClient webdav;
     private final ReleaseClient releases = new ReleaseClient();
@@ -45,6 +46,33 @@ public class SalaryNativePlugin extends Plugin {
             .readTimeout(30, java.util.concurrent.TimeUnit.SECONDS)
             .callTimeout(6, java.util.concurrent.TimeUnit.MINUTES).build());
         // BridgeActivity delivers the cold-start intent through handleOnNewIntent after plugin loading.
+    }
+
+    @PluginMethod
+    public void getAppSettings(PluginCall call) {
+        storageExecutor.execute(() -> {
+            try {
+                android.content.SharedPreferences settings = getContext().getSharedPreferences("app-settings", android.content.Context.MODE_PRIVATE);
+                // A malformed older preference keeps confirmation enabled.
+                Object stored = settings.getAll().get("confirmExit");
+                boolean confirmExit = stored instanceof Boolean ? (Boolean)stored : true;
+                call.resolve(new JSObject().put("confirmExit", confirmExit));
+            } catch (RuntimeException error) { reject(call, "设置暂时无法读取", "SETTINGS_READ_FAILED"); }
+        });
+    }
+
+    @PluginMethod
+    public void setAppSettings(PluginCall call) {
+        Boolean confirmExit = call.getBoolean("confirmExit");
+        if (confirmExit == null) { reject(call, "设置内容无效", "SETTINGS_INVALID"); return; }
+        storageExecutor.execute(() -> {
+            try {
+                boolean saved = getContext().getSharedPreferences("app-settings", android.content.Context.MODE_PRIVATE)
+                    .edit().putBoolean("confirmExit", confirmExit).commit();
+                if (saved) call.resolve();
+                else reject(call, "设置未保存，请重试", "SETTINGS_SAVE_FAILED");
+            } catch (RuntimeException error) { reject(call, "设置未保存，请重试", "SETTINGS_SAVE_FAILED"); }
+        });
     }
 
     @PluginMethod
@@ -259,6 +287,124 @@ public class SalaryNativePlugin extends Plugin {
             try { ledger.acknowledge(id); call.resolve(); }
             catch (Exception error) { rejectSafe(call, error, "确认导入失败，原文件已保留", "PENDING_ACK_FAILED"); }
         });
+    }
+
+    private synchronized EvidenceStore evidence() throws java.io.IOException {
+        if (evidence == null) evidence = new EvidenceStore(getContext().getFilesDir());
+        return evidence;
+    }
+
+    @PluginMethod
+    public void webdavListEvidence(PluginCall call) {
+        networkExecutor.execute(() -> {
+            try {
+                SyncCredentialStore.Credentials value = requireCredentials();
+                JSONArray items = new JSONArray();
+                for (WebDavClient.RemoteEvidence item : webdav.listEvidence(value.username, value.password))
+                    items.put(new JSONObject().put("recordId", item.recordId).put("id", item.id).put("mimeType", item.mimeType));
+                call.resolve(new JSObject().put("items", items));
+            } catch (Exception error) { rejectSafe(call, error, "读取云端原图失败，请重试", "EVIDENCE_SYNC_READ_FAILED"); }
+        });
+    }
+
+    @PluginMethod
+    public void webdavGetEvidence(PluginCall call) {
+        networkExecutor.execute(() -> {
+            try {
+                SyncCredentialStore.Credentials value = requireCredentials();
+                String recordId = call.getString("recordId"), id = call.getString("id"), mimeType = call.getString("mimeType");
+                byte[] bytes = webdav.getEvidence(recordId, id, mimeType, value.username, value.password);
+                validateEvidenceImage(bytes, mimeType);
+                call.resolve(new JSObject().put("item", evidence().add(recordId, bytes, mimeType)));
+            } catch (Exception error) { rejectSafe(call, error, "下载原图失败，本机原图已保留", "EVIDENCE_SYNC_READ_FAILED"); }
+        });
+    }
+
+    @PluginMethod
+    public void webdavPutEvidence(PluginCall call) {
+        networkExecutor.execute(() -> {
+            try {
+                SyncCredentialStore.Credentials value = requireCredentials();
+                String recordId = call.getString("recordId"), id = call.getString("id");
+                webdav.putEvidence(recordId, id, evidence().read(recordId, id), value.username, value.password);
+                call.resolve();
+            } catch (Exception error) { rejectSafe(call, error, "上传原图失败，本机原图已保留", "EVIDENCE_SYNC_WRITE_FAILED"); }
+        });
+    }
+
+    @PluginMethod
+    public void listEvidence(PluginCall call) {
+        storageExecutor.execute(() -> {
+            try { call.resolve(new JSObject().put("items", evidence().list(call.getString("recordId")))); }
+            catch (Exception error) { rejectSafe(call, error, "读取原图失败，已有文件已保留", "EVIDENCE_READ_FAILED"); }
+        });
+    }
+
+    @PluginMethod
+    public void readEvidence(PluginCall call) {
+        storageExecutor.execute(() -> {
+            try {
+                EvidenceStore.ReadResult result = evidence().read(call.getString("recordId"), call.getString("id"));
+                call.resolve(new JSObject().put("base64", android.util.Base64.encodeToString(result.bytes, android.util.Base64.NO_WRAP)).put("mimeType", result.mimeType));
+            } catch (Exception error) { rejectSafe(call, error, "读取原图失败，已有文件已保留", "EVIDENCE_READ_FAILED"); }
+        });
+    }
+
+    @PluginMethod
+    public void addEvidence(PluginCall call) {
+        storageExecutor.execute(() -> {
+            try {
+                String base64 = call.getString("base64");
+                String mimeType = call.getString("mimeType");
+                if (base64 == null || base64.length() == 0 || base64.length() > ((EvidenceStore.MAX_BYTES + 2) / 3) * 4)
+                    throw new ImportStore.UserInputException("每张原图不能超过 20 MiB");
+                if (!("image/png".equals(mimeType) || "image/jpeg".equals(mimeType)))
+                    throw new ImportStore.UserInputException("请选择 PNG 或 JPEG 原图");
+                byte[] bytes;
+                try { bytes = android.util.Base64.decode(base64, android.util.Base64.DEFAULT); }
+                catch (IllegalArgumentException error) { throw new ImportStore.UserInputException("原图内容无效"); }
+                validateEvidenceImage(bytes, mimeType);
+                call.resolve(new JSObject().put("item", evidence().add(call.getString("recordId"), bytes, mimeType)));
+            } catch (Exception error) { rejectSafe(call, error, "保存原图失败，请检查空间后重试", "EVIDENCE_SAVE_FAILED"); }
+        });
+    }
+
+    @PluginMethod
+    public void pickEvidence(PluginCall call) {
+        try { EvidenceStore.validateRecordId(call.getString("recordId")); }
+        catch (Exception error) { rejectSafe(call, error, "工资记录标识无效", "EVIDENCE_PICK_FAILED"); return; }
+        Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT).addCategory(Intent.CATEGORY_OPENABLE).setType("image/*");
+        intent.putExtra(Intent.EXTRA_MIME_TYPES, new String[]{"image/png", "image/jpeg"});
+        intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
+        openPicker(call, intent, "evidenceSelected");
+    }
+
+    @ActivityCallback
+    private void evidenceSelected(PluginCall call, ActivityResult result) {
+        pickerOpen.set(false);
+        if (call == null) { emitImportError("原图添加已中断，请重新选择截图", "EVIDENCE_PICK_INTERRUPTED"); return; }
+        Uri uri = selectedUri(result);
+        if (uri == null) { call.resolve(new JSObject().put("cancelled", true).put("items", new JSONArray())); return; }
+        storageExecutor.execute(() -> {
+            try {
+                if (!"content".equals(uri.getScheme())) throw new ImportStore.UserInputException("请从系统相册或文件中选择原图");
+                byte[] bytes;
+                // Copy while the temporary grant is valid; retaining a URI would lose the proof later.
+                try (java.io.InputStream input = getContext().getContentResolver().openInputStream(uri)) { bytes = EvidenceStore.readInput(input); }
+                validateEvidenceImage(bytes, null);
+                JSONObject item = evidence().add(call.getString("recordId"), bytes, null);
+                call.resolve(new JSObject().put("cancelled", false).put("items", new JSONArray().put(item)));
+            } catch (Exception error) { rejectSafe(call, error, "保存原图失败，请检查空间后重试", "EVIDENCE_SAVE_FAILED"); }
+        });
+    }
+
+    private static void validateEvidenceImage(byte[] bytes, String mimeType) throws java.io.IOException {
+        EvidenceStore.ImageInfo expected = EvidenceStore.inspect(bytes, mimeType);
+        android.graphics.BitmapFactory.Options bounds = new android.graphics.BitmapFactory.Options();
+        bounds.inJustDecodeBounds = true;
+        android.graphics.BitmapFactory.decodeByteArray(bytes, 0, bytes.length, bounds);
+        if (bounds.outWidth != expected.width || bounds.outHeight != expected.height)
+            throw new ImportStore.UserInputException("图片损坏或格式不受支持，请重新选择原图");
     }
 
     @PluginMethod

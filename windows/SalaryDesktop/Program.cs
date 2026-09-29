@@ -34,6 +34,8 @@ namespace SalaryDesktop
     {
         private readonly WebView2 web = new WebView2();
         private readonly LocalStore store;
+        private readonly EvidenceStore evidence;
+        private readonly AppSettingsStore appSettings;
         private readonly SemaphoreSlim writeGate = new SemaphoreSlim(1, 1);
         private bool captureRunning;
         private bool browserReady;
@@ -41,6 +43,9 @@ namespace SalaryDesktop
         private int activeOperations;
         private bool applicationBusy;
         private bool closeDialogOpen;
+        private bool closeConfirmed;
+        private bool exitHandlerReady;
+        private readonly System.Windows.Forms.Timer exitRequestTimer = new System.Windows.Forms.Timer { Interval = 1200 };
         private CoreWebView2MemoryUsageTargetLevel? memoryTarget;
         public DesktopForm()
         {
@@ -50,6 +55,16 @@ namespace SalaryDesktop
             MinimumSize = new System.Drawing.Size(460, 640);
             StartPosition = FormStartPosition.CenterScreen;
             store = new LocalStore(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "SalaryTrail", "Desktop"));
+            evidence = new EvidenceStore(store.DirectoryPath);
+            appSettings = new AppSettingsStore(store.DirectoryPath);
+            exitRequestTimer.Tick += (s, e) =>
+            {
+                exitRequestTimer.Stop();
+                if (!closeDialogOpen) return;
+                closeDialogOpen = false;
+                if (ConfirmNativeExit()) { closeConfirmed = true; Close(); }
+            };
+            FormClosed += (s, e) => exitRequestTimer.Dispose();
             web.Dock = DockStyle.Fill;
             Controls.Add(web);
             Shown += async (s, e) => await InitializeAsync();
@@ -67,25 +82,38 @@ namespace SalaryDesktop
         {
             base.OnFormClosing(e);
             if (e.Cancel) return;
-            var action = ClosePolicy.Decide(e.CloseReason, HasPendingWork, closeDialogOpen, false);
+            var action = ClosePolicy.Decide(e.CloseReason, HasPendingWork, closeDialogOpen, closeConfirmed, appSettings.ConfirmExit);
             if (action == CloseAction.Allow) return;
             e.Cancel = true;
             if (action == CloseAction.KeepOpen) return;
+            if (action == CloseAction.Busy)
+            {
+                closeConfirmed = false;
+                ShowBusyBeforeExit();
+                return;
+            }
+            if (browserReady && exitHandlerReady)
+            {
+                closeDialogOpen = true;
+                exitRequestTimer.Start();
+                Respond(new { @event = "requestExit" });
+                return;
+            }
+            if (ConfirmNativeExit()) e.Cancel = false;
+        }
+        private bool ConfirmNativeExit()
+        {
+            if (HasPendingWork) { ShowBusyBeforeExit(); return false; }
             closeDialogOpen = true;
             try
             {
-                if (action == CloseAction.Busy)
-                {
-                    ShowBusyBeforeExit();
-                    return;
-                }
                 var response = MessageBox.Show(this, "退出薪迹？", "薪迹", MessageBoxButtons.OKCancel,
                     MessageBoxIcon.Question, MessageBoxDefaultButton.Button2);
-                if (response != DialogResult.OK) return;
+                if (response != DialogResult.OK) return false;
                 // Native dialogs run a message loop: a pending web request may arrive while one is open.
-                action = ClosePolicy.Decide(e.CloseReason, HasPendingWork, false, true);
-                if (action == CloseAction.Allow) e.Cancel = false;
-                else ShowBusyBeforeExit();
+                if (!HasPendingWork) return true;
+                ShowBusyBeforeExit();
+                return false;
             }
             finally { closeDialogOpen = false; }
         }
@@ -163,7 +191,7 @@ namespace SalaryDesktop
             var operationStarted = false;
             try
             {
-                if (Encoding.UTF8.GetByteCount(e.WebMessageAsJson) > JsonData.MaxBytes * 2 + 8192) throw new UserError("请求数据过大。");
+                if (Encoding.UTF8.GetByteCount(e.WebMessageAsJson) > Math.Max(JsonData.MaxBytes * 2, ((EvidenceStore.MaxBytes + 2) / 3) * 4) + 8192) throw new UserError("请求数据过大。");
                 var request = JsonData.Serializer().DeserializeObject(e.WebMessageAsJson) as Dictionary<string, object>;
                 if (request == null) return;
                 object value;
@@ -188,6 +216,33 @@ namespace SalaryDesktop
         {
             switch (method)
             {
+                case "getAppSettings": return new { confirmExit = appSettings.ConfirmExit };
+                case "setAppSettings":
+                    object confirmExit;
+                    if (!args.TryGetValue("confirmExit", out confirmExit) || !(confirmExit is bool)) throw new UserError("设置内容无效。");
+                    appSettings.Save((bool)confirmExit);
+                    return new { };
+                case "setExitHandlerReady":
+                    object ready;
+                    if (!args.TryGetValue("ready", out ready) || !(ready is bool)) throw new UserError("操作参数不完整。");
+                    exitHandlerReady = (bool)ready;
+                    return new { };
+                case "acknowledgeExitRequest":
+                    exitRequestTimer.Stop();
+                    return new { };
+                case "cancelAppExit":
+                    exitRequestTimer.Stop();
+                    closeDialogOpen = false;
+                    closeConfirmed = false;
+                    return new { };
+                case "exitApp":
+                    // This request itself occupies one operation slot; every other task must finish first.
+                    if (applicationBusy || captureRunning || activeOperations > 1) throw new UserError("正在处理数据，请稍后再退出。");
+                    exitRequestTimer.Stop();
+                    closeDialogOpen = false;
+                    closeConfirmed = true;
+                    BeginInvoke(new Action(Close));
+                    return new { };
                 case "setAppBusy":
                     object busy;
                     if (!args.TryGetValue("busy", out busy) || !(busy is bool)) throw new UserError("操作参数不完整。");
@@ -207,6 +262,11 @@ namespace SalaryDesktop
                     finally { writeGate.Release(); }
                     return new { };
                 case "captureFeishu": return await CapturePageAsync();
+                case "listEvidence": return new { items = await Task.Run(() => evidence.List(StringArg(args, "recordId"))) };
+                case "readEvidence": return await Task.Run(() => evidence.Read(StringArg(args, "recordId"), StringArg(args, "id")));
+                case "addEvidence": return new { item = await Task.Run(() => evidence.Add(StringArg(args, "recordId"), EvidenceStore.Decode(StringArg(args, "base64")), StringArg(args, "mimeType"))) };
+                case "pickEvidence": return await PickEvidenceAsync(StringArg(args, "recordId"));
+                case "captureEvidence": return await EvidenceCapture.CaptureAsync(this, evidence, StringArg(args, "recordId"));
                 case "pickDataFile": return PickFile();
                 case "exportDataFile": return ExportFile(args);
                 case "checkForUpdates":
@@ -225,6 +285,12 @@ namespace SalaryDesktop
                     using (var dav = new WebDavClient(store.ReadCredentials(), null, Path.Combine(store.DirectoryPath, "SyncCache"))) return await dav.PullAsync();
                 case "webdavPublish":
                     using (var dav = new WebDavClient(store.ReadCredentials(), null, Path.Combine(store.DirectoryPath, "SyncCache"))) return await dav.PublishAsync(StringArg(args, "content"));
+                case "webdavListEvidence":
+                    using (var dav = new WebDavClient(store.ReadCredentials(), null, null, TimeSpan.FromSeconds(90))) return await dav.ListEvidenceAsync();
+                case "webdavGetEvidence":
+                    using (var dav = new WebDavClient(store.ReadCredentials(), null, null, TimeSpan.FromSeconds(90))) return await dav.GetEvidenceAsync(evidence, StringArg(args, "recordId"), StringArg(args, "id"), StringArg(args, "mimeType"));
+                case "webdavPutEvidence":
+                    using (var dav = new WebDavClient(store.ReadCredentials(), null, null, TimeSpan.FromSeconds(90))) return await dav.PutEvidenceAsync(evidence, StringArg(args, "recordId"), StringArg(args, "id"));
                 default: throw new UserError("此操作不受支持。");
             }
         }
@@ -262,6 +328,16 @@ namespace SalaryDesktop
             try { await task; }
             catch (Exception) { }
             finally { captureRunning = false; }
+        }
+        private async Task<object> PickEvidenceAsync(string recordId)
+        {
+            EvidenceStore.ValidateRecordId(recordId);
+            using (var dialog = new OpenFileDialog { Filter = "工资原图 (*.png;*.jpg;*.jpeg)|*.png;*.jpg;*.jpeg", Multiselect = false, CheckFileExists = true, Title = "添加工资原图" })
+            {
+                if (dialog.ShowDialog(this) != DialogResult.OK) return new { cancelled = true, items = new object[0] };
+                var item = await Task.Run(() => evidence.AddFile(recordId, dialog.FileName));
+                return new { cancelled = false, items = new[] { item } };
+            }
         }
         private object PickFile()
         {

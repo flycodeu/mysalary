@@ -6,7 +6,7 @@ import {
   getSyncSettings,
   setSyncSettings,
   clearSyncSettings,
-  syncNutstore,
+  syncNutstoreWithEvidence,
 } from "../platform/sync";
 import { isNative } from "../platform/host";
 
@@ -23,6 +23,7 @@ const editing = ref(false);
 const busy = ref(false);
 const error = ref("");
 const message = ref("");
+const syncProgress = ref("");
 const lastSync = ref(localStorage.getItem("salary-last-sync") ?? "");
 async function run(operation: () => Promise<void>) {
   if (busy.value) return;
@@ -35,6 +36,7 @@ async function run(operation: () => Promise<void>) {
   } catch (cause) {
     error.value = cause instanceof Error ? cause.message : "同步未完成，请重试";
   } finally {
+    syncProgress.value = "";
     busy.value = false;
     emit("working", false);
   }
@@ -69,10 +71,13 @@ async function save() {
 }
 async function sync() {
   await run(async () => {
-    const result = await syncNutstore();
+    syncProgress.value = "正在同步工资";
+    const result = await syncNutstoreWithEvidence((done, total) => {
+      syncProgress.value = total ? `正在同步原图 ${done} / ${total}` : "正在完成同步";
+    });
     lastSync.value = new Date().toLocaleString("zh-CN", { hour12: false });
     localStorage.setItem("salary-last-sync", lastSync.value);
-    message.value = result.count ? "同步完成" : "暂无工资数据可同步";
+    message.value = result.count ? "工资和截图已同步" : "暂无工资数据可同步";
   });
   // Downloaded records are saved even if the conditional upload later fails.
   emit("synced");
@@ -97,6 +102,7 @@ async function disconnect() {
     @close="emit('close')"
   >
     <div class="sync-panel">
+      <p v-if="syncProgress" role="status" class="sync-progress">{{ syncProgress }}</p>
       <div v-if="!isNative" class="notice">
         请在 Windows 或 Android 应用中连接坚果云。
       </div>

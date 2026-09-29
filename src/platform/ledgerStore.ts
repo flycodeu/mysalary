@@ -96,6 +96,10 @@ export function readLedger(): Promise<Ledger> {
   return updateLedger((ledger) => ledger);
 }
 
+export async function waitForLedgerWrites(): Promise<void> {
+  await queue;
+}
+
 export function restoreLocalLedger(ledger: Ledger): Promise<void> {
   const result = queue.then(async () => {
     const content = serializeLedger(ledger);

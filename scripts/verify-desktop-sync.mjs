@@ -11,6 +11,7 @@ const url = process.env.SALARY_VIEWER_URL || "http://127.0.0.1:5198";
 const output = new URL("../.artifacts/desktop-sync/", import.meta.url);
 await mkdir(output, { recursive: true });
 const remote = new Map();
+const remoteEvidence = new Map();
 const errors = [];
 const checks = [];
 function capture(months) {
@@ -42,6 +43,7 @@ async function client(width, months) {
     pick: null,
     recoveries: [],
     calls: [],
+    evidence: new Map(),
   };
   const context = await browser.newContext({
     viewport: { width, height: 900 },
@@ -51,6 +53,27 @@ async function client(width, months) {
     switch (method) {
       case "loadLedger":
         return { content: state.content };
+      case "getAppSettings":
+        return { confirmExit: true };
+      case "setAppBusy":
+      case "setExitHandlerReady":
+        return {};
+      case "listEvidence":
+        return { items: [...state.evidence.values()].filter((item) => item.recordId === args.recordId) };
+      case "webdavListEvidence":
+        return { items: [...remoteEvidence.values()].map(({ recordId, id, mimeType }) => ({ recordId, id, mimeType })) };
+      case "webdavGetEvidence": {
+        const item = remoteEvidence.get(`${args.recordId}/${args.id}`);
+        assert.ok(item);
+        state.evidence.set(`${args.recordId}/${args.id}`, item);
+        return { item };
+      }
+      case "webdavPutEvidence": {
+        const item = state.evidence.get(`${args.recordId}/${args.id}`);
+        assert.ok(item);
+        remoteEvidence.set(`${args.recordId}/${args.id}`, item);
+        return {};
+      }
       case "saveLedger":
         state.content = args.content;
         return {};
@@ -140,7 +163,7 @@ async function sync(client) {
     await panel.getByRole("button", { name: "保存连接" }).click();
   }
   await panel.getByRole("button", { name: "立即同步" }).click();
-  await panel.getByRole("status").filter({ hasText: "同步完成" }).waitFor();
+  await panel.getByRole("status").filter({ hasText: "工资和截图已同步" }).waitFor();
   await panel.getByRole("button", { name: "关闭", exact: true }).click();
 }
 async function exportFile(client) {
@@ -166,6 +189,12 @@ try {
   await exportFile(a);
   assert.equal(JSON.parse(a.state.exported).entries.length, 2);
   await sync(a);
+  const evidence = { recordId: `ledger-${JSON.parse(a.state.content).entries[0].id}`, id: "c".repeat(64), mimeType: "image/png",
+    createdAt: "2030-04-01T00:00:00Z", sizeBytes: 128, width: 10, height: 10 };
+  remoteEvidence.set(`${evidence.recordId}/${evidence.id}`, evidence);
+  await sync(a);
+  await a.page.locator('.record-evidence[aria-label="1 张原始截图"]').waitFor();
+  checks.push("sync_refreshes_screenshot_count_for_unchanged_record");
   await collect(b.page, 1);
   await sync(b);
   await rows(b.page, 3);

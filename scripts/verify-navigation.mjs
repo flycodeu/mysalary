@@ -33,6 +33,7 @@ await context.exposeFunction("__salaryTestHost", async ({ method, args }) => {
     case "saveLedger": ledger = args.content; return {};
     case "pickDataFile": return { content: capture };
     case "getSyncSettings": await settings; return { configured: false, username: "" };
+    case "getAppSettings": return { confirmExit: true };
     case "exitApp": return {};
     default: throw new Error(`Unexpected synthetic Android method: ${method}`);
   }
@@ -49,7 +50,7 @@ await context.addInitScript(() => {
   window.androidBridge = {};
   window.Capacitor = {
     PluginHeaders: [{ name: "SalaryNative", methods: [
-      ...["listImports", "listPendingDataFiles", "loadLedger", "saveLedger", "pickDataFile", "getSyncSettings", "exitApp"]
+      ...["listImports", "listPendingDataFiles", "loadLedger", "saveLedger", "pickDataFile", "getSyncSettings", "getAppSettings", "exitApp"]
         .map((name) => ({ name, rtype: "promise" })),
       { name: "addListener", rtype: "callback" }, { name: "removeListener", rtype: "callback" },
     ] }],

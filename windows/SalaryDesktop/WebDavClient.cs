@@ -20,13 +20,13 @@ namespace SalaryDesktop
         private readonly string cacheDirectory;
         public WebDavClient(SyncCredentials credentials, HttpMessageHandler testHandler = null)
             : this(credentials, testHandler, null) { }
-        public WebDavClient(SyncCredentials credentials, HttpMessageHandler testHandler, string cacheDirectory)
+        public WebDavClient(SyncCredentials credentials, HttpMessageHandler testHandler, string cacheDirectory, TimeSpan? requestTimeout = null)
         {
             if (credentials == null) throw new UserError("请先设置坚果云账号和应用密码。");
             this.credentials = credentials;
             this.cacheDirectory = cacheDirectory;
             ServicePointManager.SecurityProtocol |= SecurityProtocolType.Tls12;
-            client = new HttpClient(testHandler ?? new HttpClientHandler { AllowAutoRedirect = false, UseCookies = false }) { Timeout = TimeSpan.FromSeconds(30) };
+            client = new HttpClient(testHandler ?? new HttpClientHandler { AllowAutoRedirect = false, UseCookies = false }) { Timeout = requestTimeout ?? TimeSpan.FromSeconds(30) };
         }
         public static bool IsStrongEtag(string value)
         {
@@ -34,7 +34,8 @@ namespace SalaryDesktop
         }
         private HttpRequestMessage Request(HttpMethod method, string url)
         {
-            if (url != FileUrl && url != FolderUrl && !(url.StartsWith(FolderUrl, StringComparison.Ordinal) && DeltaName.IsMatch(url.Substring(FolderUrl.Length)))) throw new UserError("同步地址不受支持。");
+            if (url != FileUrl && url != FolderUrl && !(url.StartsWith(FolderUrl, StringComparison.Ordinal)
+                && (DeltaName.IsMatch(url.Substring(FolderUrl.Length)) || EvidenceName.IsMatch(url.Substring(FolderUrl.Length))))) throw new UserError("同步地址不受支持。");
             var request = new HttpRequestMessage(method, url);
             request.Headers.Authorization = new AuthenticationHeaderValue("Basic", Convert.ToBase64String(Encoding.UTF8.GetBytes(credentials.Username + ":" + credentials.Password)));
             request.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));

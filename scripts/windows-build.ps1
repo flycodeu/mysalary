@@ -1,4 +1,4 @@
-param([switch]$Test, [switch]$SkipFrontend)
+﻿param([switch]$Test, [switch]$SkipFrontend)
 $ErrorActionPreference = 'Stop'
 $repoRoot = Split-Path -Parent $PSScriptRoot
 $frameworkRoot = Join-Path $env:WINDIR 'Microsoft.NET\Framework64\v4.0.30319'

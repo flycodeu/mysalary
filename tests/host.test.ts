@@ -43,4 +43,20 @@ describe("Windows document storage connection", () => {
     expect(isNative).toBe(false);
     await expect(hostCall("loadLedger")).rejects.toThrow("Windows 或 Android 应用");
   });
+
+  it("forwards a desktop close request separately from bridge responses", async () => {
+    const dispatchEvent = vi.fn();
+    let listener: (event: { data: unknown }) => void;
+    vi.stubGlobal("window", { __salaryDesktop: true, dispatchEvent, chrome: { webview: {
+      addEventListener: (_type: string, receive: typeof listener) => { listener = receive; },
+      postMessage: ({ id }: { id: string }) => {
+        listener({ data: { event: "requestExit" } });
+        listener({ data: { id, result: {} } });
+      },
+    } } });
+    const { hostCall } = await import("../src/platform/host");
+    await expect(hostCall("setExitHandlerReady", { ready: true })).resolves.toEqual({});
+    expect(dispatchEvent).toHaveBeenCalledOnce();
+    expect(dispatchEvent.mock.calls[0]?.[0].type).toBe("salary:request-exit");
+  });
 });

@@ -29,7 +29,9 @@ function capture(month) {
 }
 await context.exposeFunction("__salaryTestHost", async ({ method, args }) => {
   calls.push(method);
-  if (method === "setAppBusy") return {};
+  if (method === "setAppBusy" || method === "setExitHandlerReady") return {};
+  if (method === "getAppSettings") return { confirmExit: true };
+  if (method === "listEvidence") return { items: [] };
   if (method === "loadLedger") {
     if (calls.filter((call) => call === "loadLedger").length === 1) {
       await firstRead;
@@ -91,7 +93,7 @@ try {
   await page.getByRole("button", { name: "重试读取档案" }).click();
   await page.locator("main[data-storage-state='ready']").waitFor();
   await page.getByRole("heading", { name: "2030 年 5 月" }).waitFor();
-  assert.deepEqual(calls.slice(beforeRetry).filter((method) => method !== "setAppBusy"), ["loadLedger"]);
+  assert.deepEqual(calls.slice(beforeRetry).filter((method) => !["setAppBusy", "listEvidence"].includes(method)), ["loadLedger"]);
   assert.equal(await page.locator(".archive-row").count(), 1);
   assert.equal(await page.locator(".preview-label").count(), 0);
   checks.push("retry_reads_existing_native_ledger_without_recapture");

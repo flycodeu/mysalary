@@ -19,7 +19,7 @@ if (evidenceIndex >= 0 && !process.argv[evidenceIndex + 1]) throw new Error("--e
 const hash = (value) => createHash("sha256").update(value).digest("hex");
 const normalize = (value) => value.replace(/\r\n?/g, "\n").trim();
 const heading = `薪迹 ${targetVersion} 当前双端方案`;
-const ownership = "设计、实现、自动化测试、真实设备验证与 Owner 验收分别记录。本文不代表 Owner 验收；源码推送和安装包发布以 GitHub 交付记录中的版本、提交与证据为准。";
+const ownership = "设计、实现、自动化测试、真实设备验证与 Owner 验收分别记录。设计章节描述当前职责、实现约束与验收条件，不自动证明测试已通过；具体结果以独立分层验证登记为准。本文不代表 Owner 验收；源码推送和安装包发布以 GitHub 交付记录中的版本、提交与证据为准。";
 const modules = [
   {
     code: "D01", name: "Windows 工资采集", legacy: ["F04", "F21"],
@@ -29,6 +29,7 @@ const modules = [
       "来源包含月份、标签与原载金额文本。采集内容按格式校验后保存，重复采集相同内容去重；同月内容不同保留来源版本，不覆盖旧数据。",
       "Windows 负责采集、规则计算、归档和数据整合。沿用 .NET Framework、WinForms 与系统 WebView2，避免打包浏览器和常驻模型；采集程序按需运行。",
       "采集失败显示具体失败状态，不能补零、套用上月或要求用户逐行重新填写；来源金额与核算结果保持独立。",
+      "工资文本与原始截图分开留存。Windows 可在用户主动操作时隐藏薪迹窗口并框选真实工资页，截图直接保存到所选记录；不根据文字重绘图片，不把无截图的旧记录标为已有凭证。Android 使用系统截图后导入，跨应用直接采集仍待真机验证。",
     ],
     files: ["windows/SalaryCollector/Program.cs", "windows/SalaryDesktop/Program.cs", "src/domain/capture.ts", "src/platform/archive.ts"],
     acceptance: "可在真实飞书工资页读取展开月份；重复导入不增加同内容档案，同月异内容保留；失败不影响已有账本。",
@@ -48,43 +49,51 @@ const modules = [
     acceptance: "负值、未知值、汇总去重、同月多来源与差额回归通过；读取失败不清空现有档案；重启可读取原账本。",
   },
   {
-    code: "D03", name: "双端轻量阅读界面", legacy: ["F02", "F07", "F13", "F14"],
-    purpose: "桌面便于连续浏览月份，手机负责阅读数据，正常页面不堆输入框与内部分类选项。",
+    code: "D03", name: "双端档案、看板与原图界面", legacy: ["F02", "F07", "F13", "F14"],
+    purpose: "共用清晰的工资档案、年度看板与原图查看，设置集中管理更新和退出行为，正常页面不堆输入框与内部分类选项。",
     design: [
       "桌面采用左侧档案列表、右侧月度详情；手机保持单列列表和详情导航。优先显示实发工资，其次是应发、扣款及两组明细。",
-      "年度汇总、来源、补充信息等按需展开。隐藏金额时来源弹层也不泄露金额；示例明确标注为合成数据。",
+      "看板独立为一级页面，提供年度实发、应发与推导扣款合计、12 个月趋势及月份跳转。同月多来源只计最近保存的一份，排除示例与已删除档案；缺失月份和未知原载总额保留为空，不补零。",
+      "来源、补充信息与原始截图按需打开。隐藏金额时来源弹层、原图和图表也隐藏；示例明确标注为合成数据。原图支持多张、切换与原始尺寸查看，切换工资记录时不得显示前一条记录的异步图片。",
+      "每条记录提供原始截图入口；Windows 允许截取工资页或选择已有 PNG/JPEG，Android 通过系统图片选择器导入已截取的原图。保存到应用私有目录后再展示，取消选择不增加记录，读取失败保留已保存原图。",
       "保留年份筛选、同月多来源、来源查看、删除与恢复。新流程不再让手机承担 OCR 和逐行人工核对；旧档案读取仅作为兼容边界，不成为新采集入口。",
       "统一桌面、Android 与网页预览的品牌和交互。预览明确说明数据存于该浏览器；原生桌面与手机不得静默回退到浏览器档案库。",
-      "Android 系统返回先关闭最上层弹窗，再从月份详情或已删除列表返回主页；主页确认后才退出。窄屏支持两侧边缘返回手势，纵向滚动不能误触。处理导入或同步时保护当前操作。",
+      "Android 系统返回先关闭最上层弹窗，再从月份详情或已删除列表返回主页；主页退出按设置处理。窄屏支持两侧边缘返回手势，纵向滚动不能误触。Windows 关闭按钮或 Alt+F4 进入共享居中退出确认；原生界面尚未就绪时保留原生确认回退。",
+      "退出确认默认开启，可在设置关闭，并持久保存到本机。无论确认开关状态如何，保存、采集、截图和同步进行中都不能直接退出；退出前等待账本写入队列结束。",
     ],
-    files: ["src/App.vue", "src/style.css", "src/components/SalaryDetail.vue", "src/components/ModalSheet.vue", "src/platform/host.ts"],
-    acceptance: "320/390 像素手机与桌面宽度下无横向溢出，月份选择、金额遮挡、来源弹层、删除恢复真实交互通过；Android 真机结果独立登记。",
+    files: ["src/App.vue", "src/style.css", "src/components/SalaryDetail.vue", "src/components/SalaryDashboard.vue", "src/components/EvidencePanel.vue", "src/components/SettingsPanel.vue", "src/components/ModalSheet.vue", "src/domain/overview.ts", "src/platform/settings.ts", "src/platform/evidence.ts", "src/platform/host.ts"],
+    acceptance: "320/390 像素手机与桌面宽度无横向溢出；年度去重和空值、月份跳转、原图字节持久化与记录隔离、遮挡、居中退出、设置重启保持和操作中退出保护分别验证；浏览器模拟与 Android 真机结果独立登记。",
   },
   {
     code: "D04", name: "共享 JSON 与坚果云同步", legacy: ["F01", "F16", "F17", "F18", "F19", "F22"],
-    purpose: "电脑处理后的工资可通过 JSON 导入导出或坚果云传到手机，共享同一账本与删除状态。",
+    purpose: "通过 JSON 共享工资账本，通过坚果云共享工资与关联原图，保留来源、删除和恢复状态。",
     design: [
       "共享 JSON 使用版本化格式与严格校验，导入通过合并进入已有账本；损坏、超限或编码无效的文件不能覆盖当前数据。",
       "WebDAV 使用固定工资目录和按内容哈希命名的追加文件，兼容旧 archive-v1.json。不能依赖坚果云未保证的条件覆盖行为来保护并发数据。",
       "发布后回读并验证哈希；目录清单只接受同域、固定目录下的允许文件名，拒绝跳转、嵌套路径、遍历和超限数据。网络错误不替换本地账本。",
-      "Windows 凭据使用系统保护，Android 使用平台已有私有存储边界；凭据不写日志、Git 或同步报告。当前同步对象是工资 JSON，经 HTTPS 传输，不能宣传为端到端加密档案。",
-      "手机保留导入、同步及查看职责，不增加服务器、复杂多包层或常驻识别模型。",
+      "原图与严格 v1 工资 JSON 分离，原图按记录 ID 与 SHA-256 命名，PNG/JPEG 原始字节存入原生私有目录。每张不超过 20 MiB、4000 万像素；相同记录与哈希重复添加不增加副本，删除工资不物理删除凭证。UI 不读取原生路径。",
+      "同步先合并工资，再按已知账本记录合并原图，只追加、不远程删除。云端图片清单最多 1200 项，未知记录的图不下载；目录、类型、哈希与下载体积都需校验。图片上传后回读核对哈希；部分失败保留已完成结果并明确显示工资已同步、截图未完成，可重试。",
+      "JSON 导入导出只包含工资，不包含原图。坚果云工资增量文件与 evidence-记录ID-哈希.png/jpg 共处固定目录，各自严格筛选允许文件名；旧客户端账本读取不依赖新图片格式。旧 OCR 与人工草稿不自动转为新共享账本。",
+      "Windows 凭据使用 DPAPI，Android 使用 Keystore 保护；凭据不写日志、Git 或同步报告。工资 JSON 和截图经 HTTPS 传输，云端对象未做端到端加密，不能宣传为加密档案。",
+      "手机保留导入、同步及查看职责，不增加服务器、复杂多包层或常驻识别模型。真实坚果云原图双端往返与 Android 真机同步需独立验证，测试桩通过不提升其状态。",
     ],
-    files: ["src/platform/sync.ts", "src/components/SyncPanel.vue", "src/domain/ledger.ts", "windows/SalaryDesktop/WebDavClient.cs", "windows/SalaryDesktop/WebDavSnapshots.cs"],
-    acceptance: "合成双端合并、重复同步、删除恢复与错误隔离通过；真实云连通性、Windows 读写和 Android 真机同步分开记录。",
+    files: ["src/platform/sync.ts", "src/platform/evidenceSync.ts", "src/platform/evidence.ts", "src/components/SyncPanel.vue", "src/domain/ledger.ts", "windows/SalaryDesktop/WebDavClient.cs", "windows/SalaryDesktop/WebDavSnapshots.cs", "windows/SalaryDesktop/WebDavEvidence.cs", "windows/SalaryDesktop/EvidenceStore.cs", "android/app/src/main/java/com/flylabs/salary/EvidenceStore.java", "android/app/src/main/java/com/flylabs/salary/SalaryNativePlugin.java"],
+    acceptance: "合成双端合并、原图哈希一致、重复同步、删除恢复、未知记录隔离与部分失败重试通过；真实云连通性、Windows/Android 原图往返和真实设备持久化分开记录。",
   },
   {
     code: "D05", name: "安装、覆盖升级与更新检查", legacy: ["F20"],
-    purpose: "保留稳定应用身份和独立数据目录，支持轻量安装、原位置升级和主动查询新版本。",
+    purpose: "保留稳定应用身份和独立数据目录，在设置中发现 GitHub 新版本，按平台下载并覆盖升级。",
     design: [
       "Windows 正式安装身份固定，支持自选普通目录，升级默认沿用原目录。安装与卸载仅管理程序文件，拒绝与数据目录重叠、目录联接和短路径别名等危险目标。",
       "Android applicationId 与签名保持稳定；覆盖安装兼容性必须以签名和设备实际安装为证据，编译成功不能替代升级保留数据验证。",
-      "GitHub Releases 查询由用户主动触发，区分无新版本、未配置发布源、网络失败和可下载版本。不能把未发布的版本显示成已可用更新，也不后台自动覆盖安装。",
+      "用户打开设置时检查 GitHub 最新正式 Release，设置和更新弹窗共享同一结果，并提供重新检查。启动时不自动联网；区分无新版本、无公开版本、网络失败和可下载版本，检查失败时清除旧提示。不能把未发布的版本显示成已可用更新，也不后台自动覆盖安装。",
+      "Android 在应用内下载当前 debug.apk 发行线，显示进度并支持取消重试，校验后打开系统安装器由用户确认；未知来源权限由系统处理。缓存安装包版本必须匹配当前提示版本。Windows 当前通过浏览器获取对应安装包，由用户运行覆盖安装，不宣传为应用内自动下载。",
+      "保存、同步或截图处理中阻止开始安装；安装前等待账本写入结束。更新流程不写工资和原图，不改变私有数据目录。签名、版本与固定安装身份检查属于静态门槛；真机带数据覆盖升级仍需单独执行。",
       "构建命令只生成本地产物；GitHub 推送与 Release 发布按用户授权执行，并登记准确提交、标签、安装包及公开下载校验。安装器隔离测试与真实应用启动验证单独报告。",
-      "Windows 点击关闭或 Alt+F4 先确认退出；采集、保存或同步进行中阻止退出，避免在前端合并与原生保存之间打断工作。系统关机不显示交互式确认。",
+      "双端居中退出确认由持久设置控制；关闭确认不能绕过操作中保护。系统关机不显示交互式确认。Android 卸载仍会清除私有数据，更新应覆盖安装而非先卸载。",
     ],
-    files: ["windows/Installer/Salary.iss", "scripts/windows-installer.ps1", "scripts/windows-installer-test.ps1", "src/domain/release.ts", "src/platform/updates.ts", "src/components/UpdatePanel.vue"],
-    acceptance: "自选目录、覆盖升级、卸载保留数据和路径拒绝用例通过；真实程序两次启动数据一致；发布源未准备好时不制造更新状态。",
+    files: ["windows/Installer/Salary.iss", "scripts/windows-installer.ps1", "scripts/windows-installer-test.ps1", "scripts/release.ps1", "scripts/verify-android-upgrade.ps1", "src/domain/release.ts", "src/platform/updates.ts", "src/composables/useUpdateCheck.ts", "src/components/UpdatePanel.vue", "src/components/SettingsPanel.vue"],
+    acceptance: "安装路径与身份、覆盖升级与卸载保留数据分别验证；设置自动检查、失败清除旧状态、版本匹配、下载取消重试和安装前忙状态保护分别回归；Android 实际系统安装器及升级后的账本原图一致性由真机证据确认。",
   },
   {
     code: "D06", name: "代码维护、回归与 Git 准备", legacy: ["F05"],
@@ -166,7 +175,7 @@ if (includeGitHub) {
       release ? `最新正式发行版：${github.latestTag}\n\n地址：${github.releaseUrl}\n\n发行提交：${github.releaseCommit}` : "尚无公开正式发行版。",
       `当前工作版本：${targetVersion}；该版本${github.targetPublished ? "已发布" : "尚未登记为最新公开发行版"}。`,
       "## 已上传附件", ...github.assets.map((asset) => `- ${asset.name} · ${asset.size} bytes · ${asset.digest ?? "未返回摘要"}\n  ${asset.url}`),
-      "## 更新方式", "应用匿名读取 GitHub 最新正式 Release。用户主动打开检查更新，更高版本提供相应平台安装包，由系统覆盖安装；没有后台轮询或静默安装。0.3.2 没有更新入口，需要先手动安装 0.4.0 或更高版本。",
+      "## 更新方式", "打开设置时匿名查询 GitHub 最新正式 Release，也可主动重新检查。Android 在应用内下载并校验，再交由系统安装器确认；Windows 使用浏览器下载对应安装包后手动运行覆盖升级。没有后台轮询或静默安装。0.3.2 没有更新入口，需要先手动安装 0.4.0 或更高版本。",
       "本记录直接读取公开 GitHub API；下载字节和原生更新请求验证另见分层测试。发布不等于 Android 真机或 Owner 验收。",
     ].join("\n\n") });
 }
@@ -299,7 +308,7 @@ for (const document of obsoleteDocuments) {
       "旧方案中的手机 OCR、逐行核对、桌面与同步仅属未来的假设已经失效；不能继续将旧导入脚本作为当前维护入口。",
       `当前方案来源：salary://current/overview；当前验证来源：salary://current/verification。维护脚本：scripts/forgeflow-sync.mjs。`, ownership].join("\n\n")});
 }
-const desiredSource = {alias:source.alias,displayName:"薪迹 Windows 与 Android 工程",purpose:"Windows 采集、共享工资规则与账本、Android 阅读、JSON/WebDAV 同步及安装升级",
+const desiredSource = {alias:source.alias,displayName:"薪迹 Windows 与 Android 工程",purpose:"Windows 采集、共享工资与原图档案、双端看板设置、JSON/WebDAV 同步及安装升级",
   sourceKind:"GIT",environmentKey:source.locations[0]?.environmentKey ?? "flycode-pc",localRoot:root,remoteUrl:"https://github.com/flycodeu/mysalary.git",repoSubdir:source.repoSubdir,
   scope:{include:["README*","package.json","src/**","windows/**","android/app/src/**","tests/**","scripts/**"],exclude:["node_modules/**","dist/**",".git/**",".artifacts/**","releases/**","logs/**","*.log",".env",".env.*","android/.gradle/**","android/app/build/**","android/build/**","**/*.salary.json","**/archive-v1.json"]},
 };
@@ -314,7 +323,7 @@ if (!sourceMatches(source)) {
 }
 const eventHash = hash(JSON.stringify({specificationReceipts,documentReceipts,evidenceManifest}));
 await api(`${base}/archive/events`,"POST",{operationId:`salary-current-${eventHash.slice(0,32)}`,type:evidence?"RESULT":"DESIGN",title:evidence?`${targetVersion} 实现与分层验证已登记，Owner 未验收`:`${targetVersion} 双端方案已取代旧 OCR 规划`,
-  content:`当前范围：Windows 采集/核算/整合，Android 阅读，共享 JSON/WebDAV，轻量安装升级与代码维护。\n\n${evidence?.summary ?? "本轮同步当前设计边界；最终实现与测试证据后续独立登记。"}\n\n保留 ${before.runs.length} 条历史 Run、${before.tasks.length} 项历史 Task；旧设计与过时文档通过新修订取代，未删除不可变证据。元数据 API 不支持版本保护的项目描述与旧树标题未强行改写；当前正文明确其历史性质。\n\n${ownership}`,
+  content:`当前范围：Windows 采集/核算/整合，双端工资档案、原始截图与看板，共享 JSON/WebDAV，设置、居中退出及覆盖升级。\n\n${evidence?.summary ?? "本轮同步当前设计边界；最终实现与测试证据后续独立登记。Android 真机覆盖升级及真实坚果云原图双端往返尚未验证，Owner 未验收。"}\n\n保留 ${before.runs.length} 条历史 Run、${before.tasks.length} 项历史 Task；旧设计与过时文档通过新修订取代，未删除不可变证据。元数据 API 不支持版本保护的项目描述与旧树标题未强行改写；当前正文明确其历史性质。\n\n${ownership}`,
   documentRevisionIds:documentReceipts.map((item)=>item.currentRevisionId)});
 const [after, archiveAfter] = await Promise.all([api(base),api(`${base}/archive/export`)]);
 if (!sourceMatches(after.sources.find((item)=>item.id===source.id))) throw new Error("Source readback mismatch.");
