@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="colorPrimary">#176451</color>
+    <color name="colorPrimaryDark">#124F40</color>
+    <color name="colorAccent">#176451</color>
+    <color name="salary_background">#F6F8F5</color>
+</resources>

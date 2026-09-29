@@ -1,0 +1,33 @@
+{
+  "name": "salary-archive",
+  "version": "0.4.0",
+  "private": true,
+  "packageManager": "pnpm@10.28.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite --host 127.0.0.1",
+    "typecheck": "vue-tsc --noEmit",
+    "test": "vitest run",
+    "build": "pnpm typecheck && vite build",
+    "android:sync": "pnpm build && cap sync android",
+    "android:build": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/android-build.ps1",
+    "windows:build": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/windows-build.ps1",
+    "version:set": "node scripts/set-version.mjs",
+    "release:build": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/release.ps1",
+    "verify:browser": "node scripts/verify-viewer.mjs && node scripts/verify-startup.mjs && node scripts/verify-desktop-sync.mjs && node scripts/verify-updates.mjs"
+  },
+  "dependencies": {
+    "@capacitor/android": "8.5.2",
+    "@capacitor/core": "8.5.2",
+    "vue": "3.5.43"
+  },
+  "devDependencies": {
+    "@capacitor/cli": "8.5.2",
+    "@types/node": "^24.0.0",
+    "@vitejs/plugin-vue": "6.0.9",
+    "typescript": "5.9.3",
+    "vite": "8.3.1",
+    "vitest": "4.1.0",
+    "vue-tsc": "3.3.11"
+  }
+}
