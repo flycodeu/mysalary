@@ -26,6 +26,15 @@ try {
     $apk = Join-Path $repoRoot 'android\app\build\outputs\apk\debug\app-debug.apk'
     & (Join-Path $PSScriptRoot 'verify-android-upgrade.ps1') -BaselineApk $PreviousApk -ApkPath $apk -SdkPath $SdkPath -JdkPath $JdkPath
     $releaseDir = Join-Path $repoRoot 'releases'
+    # Keep the generated directory bounded. Only release artifacts at its root are disposable;
+    # the Windows runtime folder is rebuilt separately and is needed for packaging.
+    if (Test-Path -LiteralPath $releaseDir) {
+        Get-ChildItem -LiteralPath $releaseDir -File -Force |
+            Where-Object { $_.Name -match '^salary-\d+\.\d+\.\d+-(debug\.apk|windows(?:-setup\.exe|\.zip))$' -or $_.Name -eq 'SHA256SUMS.txt' } |
+            Remove-Item -Force
+    } else {
+        New-Item -ItemType Directory -Path $releaseDir -Force | Out-Null
+    }
     $apkOut = Join-Path $releaseDir "salary-$version-debug.apk"
     Copy-Item -LiteralPath $apk -Destination $apkOut -Force
     $zipOut = Join-Path $releaseDir "salary-$version-windows.zip"
