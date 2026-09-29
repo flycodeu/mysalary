@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onUnmounted, ref, watch } from "vue";
-import { addEvidenceFiles, captureEvidence, listEvidence, pickEvidence, readEvidence, type EvidenceItem } from "../platform/evidence";
+import { addEvidenceFiles, captureEvidence, deleteEvidence, listEvidence, pickEvidence, readEvidence, type EvidenceItem } from "../platform/evidence";
 import { isNative, isWindows } from "../platform/host";
 import AppIcon from "./AppIcon.vue";
 import ModalSheet from "./ModalSheet.vue";
@@ -16,6 +16,7 @@ const error = ref("");
 const loading = ref(false);
 const saving = ref(false);
 const reading = ref(false);
+const pendingDelete = ref<string>();
 const busy = computed(() => saving.value || reading.value);
 let recordRequest = 0;
 let previewRequest = 0;
@@ -27,6 +28,7 @@ watch(() => props.recordId, () => {
   previewRequest++;
   images.value = [];
   chosen.value = undefined;
+  pendingDelete.value = undefined;
   preview.value = "";
   zoomed.value = false;
   error.value = "";
@@ -113,6 +115,29 @@ async function filesChanged(event: Event) {
   if (files.length) await save((recordId) => addEvidenceFiles(recordId, files));
 }
 
+async function confirmDelete() {
+  const id = pendingDelete.value;
+  if (!id || busy.value) return;
+  const request = recordRequest;
+  const recordId = props.recordId;
+  pendingDelete.value = undefined;
+  saving.value = true;
+  error.value = "";
+  try {
+    await deleteEvidence(recordId, id);
+    if (request !== recordRequest) return;
+    previewRequest++;
+    preview.value = "";
+    chosen.value = undefined;
+    await refresh();
+  } catch (cause) {
+    if (request === recordRequest) {
+      await refresh();
+      error.value = cause instanceof Error ? cause.message : "删除截图失败，请重试";
+    }
+  } finally { saving.value = false; }
+}
+
 onUnmounted(() => { recordRequest++; previewRequest++; emit("working", false); });
 </script>
 
@@ -136,12 +161,22 @@ onUnmounted(() => { recordRequest++; previewRequest++; emit("working", false); }
         <div v-if="masked" class="evidence-empty">金额已隐藏，原图同时隐藏。</div>
         <div v-else-if="reading" class="evidence-loading" role="status">正在打开原图</div>
         <template v-else-if="preview">
-          <div class="evidence-preview-tools"><button class="text-button" :aria-pressed="zoomed" @click="zoomed = !zoomed">{{ zoomed ? "适应宽度" : "原始尺寸" }}</button></div>
+          <div class="evidence-preview-tools">
+            <button class="text-button" :aria-pressed="zoomed" @click="zoomed = !zoomed">{{ zoomed ? "适应宽度" : "原始尺寸" }}</button>
+            <button class="text-button evidence-delete" :disabled="busy" @click="pendingDelete = chosen"><AppIcon name="trash" />删除截图</button>
+          </div>
           <div class="evidence-image" :class="{ zoomed }"><img :src="preview" alt="已保存的工资页面原始截图" /></div>
         </template>
       </div>
       <div v-else-if="!loading && !saving" class="evidence-empty"><AppIcon name="image" /><h3>保留原始凭证</h3><p>{{ isWindows ? "展开公司的工资页面后截取，或添加已有截图。" : "在公司工资页面截屏，再将原图添加到这条记录。" }}</p></div>
       <p class="evidence-note">原图保存在本机，与工资记录关联。</p>
+    </div>
+  </ModalSheet>
+  <ModalSheet :open="Boolean(pendingDelete)" title="删除截图" centered :busy="saving" @close="pendingDelete = undefined">
+    <p class="evidence-delete-copy">删除后无法重新添加同一张原图。<span v-if="isNative">下次同步会从其他设备和坚果云移除。</span></p>
+    <div class="sheet-actions">
+      <button class="secondary-button" :disabled="saving" @click="pendingDelete = undefined">取消</button>
+      <button class="danger-button" :disabled="saving" @click="confirmDelete">确认删除</button>
     </div>
   </ModalSheet>
 </template>
@@ -152,6 +187,6 @@ onUnmounted(() => { recordRequest++; previewRequest++; emit("working", false); }
 .evidence-empty { padding: 34px 10px; color: var(--muted); text-align: center; font-size: 14px; }.evidence-empty > svg { width: 36px; height: 36px; color: #8ca598; }.evidence-empty h3 { color: var(--ink); font-size: 17px; margin: 12px 0 8px; }.evidence-empty p { max-width: 330px; margin: auto; line-height: 1.8; }
 .evidence-tabs { display: flex; gap: 8px; padding-bottom: 12px; overflow-x: auto; }.evidence-tabs button { flex-shrink: 0; padding: 8px 14px; border: 1px solid var(--line); border-radius: var(--radius-sm); font-size: 13px; }.evidence-tabs button[aria-pressed="true"] { background: var(--accent-soft); color: var(--accent); border-color: var(--accent); }
 .evidence-image { max-height: 60dvh; overflow: auto; border: 1px solid var(--line); border-radius: var(--radius-sm); background: var(--subtle); }.evidence-image img { display: block; max-width: 100%; height: auto; margin: 0 auto; }
-.evidence-image.zoomed img { max-width: none; }.evidence-preview-tools { display: flex; justify-content: flex-end; margin: -8px 0 4px; }.evidence-preview-tools button { min-height: 32px; font-size: 12px; color: var(--accent); }
+.evidence-image.zoomed img { max-width: none; }.evidence-preview-tools { display: flex; justify-content: flex-end; gap: 10px; margin: -8px 0 4px; }.evidence-preview-tools button { min-height: 32px; font-size: 12px; color: var(--accent); }.evidence-preview-tools .evidence-delete { color: var(--danger); }.evidence-delete svg { width: 15px; height: 15px; }.evidence-delete-copy { line-height: 1.7; color: var(--muted); margin: 0 0 20px; }
 .evidence-note { font-size: 12px; color: var(--muted); line-height: 1.7; margin-top: 16px; }.evidence-loading { display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--muted); padding: 20px 0; }
 </style>

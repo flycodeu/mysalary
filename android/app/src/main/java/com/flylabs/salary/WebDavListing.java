@@ -27,14 +27,16 @@ final class WebDavListing {
     private static final String ROOT = "/dav/SalaryTrail/";
 
     static List<String> parse(String xml) throws IOException {
-        return parse(xml, false);
+        return parse(xml, 0);
     }
 
     static List<String> parseEvidence(String xml) throws IOException {
-        return parse(xml, true);
+        return parse(xml, 1);
     }
 
-    private static List<String> parse(String xml, boolean evidence) throws IOException {
+    static List<String> parseEvidenceDeleted(String xml) throws IOException { return parse(xml, 2); }
+
+    private static List<String> parse(String xml, int mode) throws IOException {
         if (xml.toUpperCase(Locale.ROOT).contains("<!DOCTYPE") || xml.toUpperCase(Locale.ROOT).contains("<!ENTITY")) throw invalid();
         try {
             DocumentBuilderFactory factory = DocumentBuilderFactory.newInstance();
@@ -67,10 +69,10 @@ final class WebDavListing {
                 String name = fileName(href);
                 if (name == null) continue;
                 NodeList collections = response.getElementsByTagNameNS(DAV, "collection");
-                boolean known = evidence ? WebDavClient.evidenceName(name) : "archive-v1.json".equals(name) || deltaName(name);
+                boolean known = mode == 1 ? WebDavClient.evidenceName(name) : mode == 2 ? WebDavClient.deletedName(name) : "archive-v1.json".equals(name) || deltaName(name);
                 if (!known) continue;
                 if (collections.getLength() != 0) throw invalid();
-                if (evidence) {
+                if (mode != 0) {
                     boolean readable = false;
                     NodeList statuses = response.getElementsByTagNameNS(DAV, "status");
                     for (int index = 0; index < statuses.getLength(); index++)

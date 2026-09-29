@@ -20,6 +20,7 @@ public class WebDavEvidenceTest {
     private static final String ID = EvidenceStore.hash(PNG);
     private static final String RECORD = "ledger-" + ID;
     private static final String NAME = "evidence-" + RECORD + "-" + ID + ".png";
+    private static final String DELETED = "evidence-deleted-" + RECORD + "-" + ID + ".txt";
 
     @Test public void listingExtractsOnlySafeOriginalNamesWithMatchingFields() throws Exception {
         List<Request> requests = new ArrayList<>();
@@ -38,6 +39,30 @@ public class WebDavEvidenceTest {
             item(NAME).replace("<d:resourcetype/>", "<d:resourcetype><d:collection/></d:resourcetype>")};
         for (String content : invalid) rejects(() -> WebDavListing.parseEvidence(new String(xml(content), StandardCharsets.UTF_8)));
         rejects(() -> WebDavListing.parseEvidence("<!DOCTYPE x><d:multistatus xmlns:d='DAV:'/>") );
+    }
+
+    @Test public void deletionMarkersAreListedAndCloudImageIsRemovedOnlyAfterVerifiedMarker() throws Exception {
+        List<Request> listingRequests = new ArrayList<>();
+        List<WebDavClient.RemoteDeletion> deleted = client(listingRequests, new int[]{207}, xml(item(DELETED) + item(NAME)))
+            .listDeletedEvidence("synthetic", "password");
+        assertEquals(1, deleted.size()); assertEquals(RECORD, deleted.get(0).recordId); assertEquals(ID, deleted.get(0).id);
+        rejects(() -> WebDavListing.parseEvidenceDeleted(new String(xml(item(DELETED) + item(DELETED)), StandardCharsets.UTF_8)));
+
+        byte[] marker = "deleted-v1\n".getBytes(StandardCharsets.UTF_8);
+        List<Request> publish = new ArrayList<>();
+        client(publish, new int[]{405, 404, 201, 200}, empty(), empty(), empty(), marker)
+            .putEvidenceDeletion(RECORD, ID, "synthetic", "password");
+        assertEquals("MKCOL", publish.get(0).method());
+        assertEquals("PUT", publish.get(2).method());
+        assertEquals("*", publish.get(2).header("If-None-Match"));
+        List<Request> remove = new ArrayList<>();
+        client(remove, new int[]{200, 204}, marker, empty())
+            .deleteEvidence(RECORD, ID, "image/png", "synthetic", "password");
+        assertEquals(WebDavClient.DIRECTORY + DELETED, remove.get(0).url().toString());
+        assertEquals(WebDavClient.DIRECTORY + NAME, remove.get(1).url().toString());
+        assertEquals("DELETE", remove.get(1).method());
+        rejects(() -> client(new ArrayList<>(), new int[]{404}, empty())
+            .deleteEvidence(RECORD, ID, "image/png", "synthetic", "password"));
     }
 
     @Test public void downloadKeepsExactBytesAndValidatesContentHashAndMime() throws Exception {

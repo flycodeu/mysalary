@@ -113,6 +113,30 @@ try {
   await page.getByRole("heading", { name: "2030 年 8 月", exact: true }).waitFor();
   checks.push("dashboard_mask_hides_trend_and_month_link_opens_its_salary");
 
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.locator(".detail-back:visible").click();
+  await page.locator(".archive-item").first().click();
+  await openEvidence();
+  await page.waitForFunction(() => document.querySelector(".evidence-image img")?.naturalWidth > 0);
+  await page.getByRole("button", { name: "删除截图", exact: true }).click();
+  const confirmation = page.getByRole("dialog", { name: "删除截图", exact: true });
+  await screenshot("evidence-delete-confirm-390.png", false);
+  await confirmation.getByRole("button", { name: "取消", exact: true }).click();
+  assert.equal(await page.locator(".evidence-image img").count(), 1);
+  await page.getByRole("button", { name: "删除截图", exact: true }).click();
+  await confirmation.getByRole("button", { name: "确认删除", exact: true }).click();
+  await page.getByRole("heading", { name: "保留原始凭证" }).waitFor();
+  assert.equal(await page.locator(".evidence-image img").count(), 0);
+  await closeEvidence();
+  await page.reload();
+  await page.waitForFunction(() => document.querySelector("[data-storage-state='ready']"));
+  await page.locator(".archive-item").first().click();
+  await openEvidence();
+  await page.getByRole("heading", { name: "保留原始凭证" }).waitFor();
+  await page.getByLabel("选择工资截图").setInputFiles({ name: "deleted-original.png", mimeType: "image/png", buffer: original });
+  await page.getByRole("alert").filter({ hasText: "这张截图已删除" }).waitFor();
+  checks.push("confirmed_delete_removes_original_and_persists_across_reload_without_reimport");
+
   assert.deepEqual(errors, []);
   const evidence = { status: "PASS", source: "synthetic browser data and real IndexedDB storage", checks };
   await writeFile(new URL("checks.json", output), JSON.stringify(evidence, null, 2));

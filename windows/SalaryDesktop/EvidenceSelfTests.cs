@@ -32,6 +32,12 @@ namespace SalaryDesktop
                 var jpeg = ImageBytes(ImageFormat.Jpeg);
                 store.Add("record-1", jpeg, "image/jpeg");
                 Assert(store.List("record-1").Count == 2);
+                var jpegId = EvidenceStore.Hash(jpeg);
+                store.Delete("record-1", jpegId);
+                Assert(store.List("record-1").Count == 1 && store.ListDeleted("record-1").SequenceEqual(new[] { jpegId }));
+                Assert(Rejects(() => store.Read("record-1", jpegId)) && Rejects(() => store.Add("record-1", jpeg, "image/jpeg")));
+                restarted.Delete("record-1", jpegId);
+                Assert(restarted.ListDeleted("record-1").Count == 1);
                 Assert(Rejects(() => store.Add("record-1", jpeg, "image/png")));
                 Assert(Rejects(() => store.Add("../outside", png, "image/png")) && Rejects(() => store.List("a/b")) && Rejects(() => store.Read("record-1", "../image")));
                 Assert(Rejects(() => store.Add("record-1", new byte[EvidenceStore.MaxBytes + 1], "image/png")));
@@ -41,7 +47,7 @@ namespace SalaryDesktop
                 Assert(Rejects(() => store.Add("record-1", huge, "image/png")));
                 var ledger = new LocalStore(directory);
                 ledger.SaveLedger("{\"format\":\"salary-archive\",\"version\":1,\"entries\":[]}");
-                Assert(new EvidenceStore(directory).List("record-1").Count == 2);
+                Assert(new EvidenceStore(directory).List("record-1").Count == 1);
                 var pngPath = Directory.GetFiles(Path.Combine(directory, "evidence"), (string)first["id"] + ".png", SearchOption.AllDirectories)
                     .First(path => path.Contains("record-" + EvidenceStore.Hash(Encoding.UTF8.GetBytes("record-1"))));
                 File.WriteAllBytes(pngPath, new byte[png.Length]);

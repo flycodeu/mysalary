@@ -34,6 +34,8 @@ final class WebDavClient {
     private static final int MAX_PULL_BYTES = 16 * 1024 * 1024;
     private final OkHttpClient client;
     private static final Pattern EVIDENCE_NAME = Pattern.compile("evidence-([A-Za-z0-9_-]{1,96})-([a-f0-9]{64})\\.(png|jpg)");
+    private static final Pattern DELETED_NAME = Pattern.compile("evidence-deleted-([A-Za-z0-9_-]{1,96})-([a-f0-9]{64})\\.txt");
+    private static final byte[] DELETED_BODY = "deleted-v1\n".getBytes(StandardCharsets.UTF_8);
 
     WebDavClient() {
         this(new OkHttpClient.Builder().followRedirects(false).followSslRedirects(false)
@@ -45,6 +47,13 @@ final class WebDavClient {
     WebDavClient(OkHttpClient client) { this.client = client; }
 
     static boolean evidenceName(String name) { return name != null && EVIDENCE_NAME.matcher(name).matches(); }
+    static boolean deletedName(String name) { return name != null && DELETED_NAME.matcher(name).matches(); }
+
+    private static String deletedNameFor(String recordId, String id) throws IOException {
+        EvidenceStore.validateRecordId(recordId);
+        if (id == null || !id.matches("[a-f0-9]{64}")) throw new ImportStore.UserInputException("原图标识无效");
+        return "evidence-deleted-" + recordId + "-" + id + ".txt";
+    }
 
     static String evidenceNameFor(String recordId, String id, String mimeType) throws IOException {
         EvidenceStore.validateRecordId(recordId);
@@ -54,10 +63,30 @@ final class WebDavClient {
     }
 
     List<RemoteEvidence> listEvidence(String username, String password) throws IOException {
+        List<RemoteEvidence> result = new ArrayList<>();
+        for (String name : listEvidenceNames(username, password, false)) {
+            Matcher match = EVIDENCE_NAME.matcher(name);
+            if (!match.matches()) throw new ImportStore.UserInputException("云端原图名称无效");
+            result.add(new RemoteEvidence(match.group(1), match.group(2), "png".equals(match.group(3)) ? "image/png" : "image/jpeg"));
+        }
+        return result;
+    }
+
+    List<RemoteDeletion> listDeletedEvidence(String username, String password) throws IOException {
+        List<RemoteDeletion> result = new ArrayList<>();
+        for (String name : listEvidenceNames(username, password, true)) {
+            Matcher match = DELETED_NAME.matcher(name);
+            if (!match.matches()) throw new ImportStore.UserInputException("云端截图删除记录无效");
+            result.add(new RemoteDeletion(match.group(1), match.group(2)));
+        }
+        return result;
+    }
+
+    private List<String> listEvidenceNames(String username, String password, boolean deleted) throws IOException {
         long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(30);
         Request listing = request(DIRECTORY, username, password).header("Accept", "application/xml").header("Depth", "1")
             .method("PROPFIND", RequestBody.create(LIST_BODY, XML)).build();
-        List<RemoteEvidence> result = new ArrayList<>();
+        List<String> result = new ArrayList<>();
         try (Response response = execute(listing, deadline)) {
             if (response.code() == 404) return result;
             if (response.code() == 409) {
@@ -68,14 +97,53 @@ final class WebDavClient {
             if (response.code() != 207) throw statusError(response.code());
             ResponseBody body = response.body();
             if (body == null || body.contentLength() > WebDavListing.MAX_BYTES) throw new ImportStore.UserInputException("云端目录响应超过 1 MiB 或不完整");
-            for (String name : WebDavListing.parseEvidence(decode(readBounded(body.byteStream(), WebDavListing.MAX_BYTES)))) {
-                Matcher match = EVIDENCE_NAME.matcher(name);
-                if (!match.matches()) throw new ImportStore.UserInputException("云端原图名称无效");
-                result.add(new RemoteEvidence(match.group(1), match.group(2), "png".equals(match.group(3)) ? "image/png" : "image/jpeg"));
-            }
+            String xml = decode(readBounded(body.byteStream(), WebDavListing.MAX_BYTES));
+            result.addAll(deleted ? WebDavListing.parseEvidenceDeleted(xml) : WebDavListing.parseEvidence(xml));
         }
         requireTimeRemaining(deadline);
         return result;
+    }
+
+    void putEvidenceDeletion(String recordId, String id, String username, String password) throws IOException {
+        String name = deletedNameFor(recordId, id);
+        long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(45);
+        Request collection = request(DIRECTORY, username, password).method("MKCOL", RequestBody.create(new byte[0], null)).build();
+        try (Response response = execute(collection, deadline)) {
+            if (response.code() != 201 && response.code() != 405) throw statusError(response.code());
+        }
+        byte[] existing = readDeletion(name, username, password, deadline);
+        if (existing == null) {
+            Request upload = request(DIRECTORY + name, username, password).header("If-None-Match", "*")
+                .put(RequestBody.create(DELETED_BODY, MediaType.get("text/plain"))).build();
+            try (Response response = execute(upload, deadline)) {
+                if (response.code() != 200 && response.code() != 201 && response.code() != 204 && response.code() != 412) throw statusError(response.code());
+            }
+        }
+        if (!Arrays.equals(DELETED_BODY, readDeletion(name, username, password, deadline)))
+            throw new ImportStore.UserInputException("云端截图删除记录校验失败，已停止同步");
+    }
+
+    void deleteEvidence(String recordId, String id, String mimeType, String username, String password) throws IOException {
+        String name = evidenceNameFor(recordId, id, mimeType), deletion = deletedNameFor(recordId, id);
+        long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(45);
+        if (!Arrays.equals(DELETED_BODY, readDeletion(deletion, username, password, deadline)))
+            throw new ImportStore.UserInputException("删除标记未同步，云端原图未删除");
+        Request remove = request(DIRECTORY + name, username, password).delete().build();
+        try (Response response = execute(remove, deadline)) {
+            if (response.code() != 200 && response.code() != 202 && response.code() != 204 && response.code() != 404) throw statusError(response.code());
+        }
+    }
+
+    private byte[] readDeletion(String name, String username, String password, long deadline) throws IOException {
+        if (!deletedName(name)) throw new ImportStore.UserInputException("云端截图删除记录名称无效");
+        Request request = request(DIRECTORY + name, username, password).get().build();
+        try (Response response = execute(request, deadline)) {
+            if (response.code() == 404) return null;
+            if (response.code() != 200) throw statusError(response.code());
+            ResponseBody body = response.body();
+            if (body == null || body.contentLength() > 32) throw new ImportStore.UserInputException("云端截图删除记录无效");
+            return readBounded(body.byteStream(), 32);
+        }
     }
 
     byte[] getEvidence(String recordId, String id, String mimeType, String username, String password) throws IOException {
@@ -136,6 +204,10 @@ final class WebDavClient {
         final String id;
         final String mimeType;
         RemoteEvidence(String recordId, String id, String mimeType) { this.recordId = recordId; this.id = id; this.mimeType = mimeType; }
+    }
+    static final class RemoteDeletion {
+        final String recordId, id;
+        RemoteDeletion(String recordId, String id) { this.recordId = recordId; this.id = id; }
     }
 
     List<RemoteFile> pull(String username, String password) throws IOException {

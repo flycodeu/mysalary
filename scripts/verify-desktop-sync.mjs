@@ -60,8 +60,10 @@ async function client(width, months) {
         return {};
       case "listEvidence":
         return { items: [...state.evidence.values()].filter((item) => item.recordId === args.recordId) };
+      case "listDeletedEvidence":
+        return { ids: [] };
       case "webdavListEvidence":
-        return { items: [...remoteEvidence.values()].map(({ recordId, id, mimeType }) => ({ recordId, id, mimeType })) };
+        return { items: [...remoteEvidence.values()].map(({ recordId, id, mimeType }) => ({ recordId, id, mimeType })), deleted: [] };
       case "webdavGetEvidence": {
         const item = remoteEvidence.get(`${args.recordId}/${args.id}`);
         assert.ok(item);

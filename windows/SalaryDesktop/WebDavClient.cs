@@ -35,7 +35,8 @@ namespace SalaryDesktop
         private HttpRequestMessage Request(HttpMethod method, string url)
         {
             if (url != FileUrl && url != FolderUrl && !(url.StartsWith(FolderUrl, StringComparison.Ordinal)
-                && (DeltaName.IsMatch(url.Substring(FolderUrl.Length)) || EvidenceName.IsMatch(url.Substring(FolderUrl.Length))))) throw new UserError("同步地址不受支持。");
+                && (DeltaName.IsMatch(url.Substring(FolderUrl.Length)) || EvidenceName.IsMatch(url.Substring(FolderUrl.Length))
+                    || DeletedName.IsMatch(url.Substring(FolderUrl.Length))))) throw new UserError("同步地址不受支持。");
             var request = new HttpRequestMessage(method, url);
             request.Headers.Authorization = new AuthenticationHeaderValue("Basic", Convert.ToBase64String(Encoding.UTF8.GetBytes(credentials.Username + ":" + credentials.Password)));
             request.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));

@@ -269,7 +269,9 @@ namespace SalaryDesktop
                     return new { };
                 case "captureFeishu": return await CapturePageAsync();
                 case "listEvidence": return new { items = await Task.Run(() => evidence.List(StringArg(args, "recordId"))) };
+                case "listDeletedEvidence": return new { ids = await Task.Run(() => evidence.ListDeleted(StringArg(args, "recordId"))) };
                 case "readEvidence": return await Task.Run(() => evidence.Read(StringArg(args, "recordId"), StringArg(args, "id")));
+                case "deleteEvidence": await Task.Run(() => evidence.Delete(StringArg(args, "recordId"), StringArg(args, "id"))); return new { };
                 case "addEvidence": return new { item = await Task.Run(() => evidence.Add(StringArg(args, "recordId"), EvidenceStore.Decode(StringArg(args, "base64")), StringArg(args, "mimeType"))) };
                 case "pickEvidence": return await PickEvidenceAsync(StringArg(args, "recordId"));
                 case "captureEvidence": return await EvidenceCapture.CaptureAsync(this, evidence, StringArg(args, "recordId"));
@@ -308,6 +310,10 @@ namespace SalaryDesktop
                     using (var dav = new WebDavClient(store.ReadCredentials(), null, null, TimeSpan.FromSeconds(90))) return await dav.GetEvidenceAsync(evidence, StringArg(args, "recordId"), StringArg(args, "id"), StringArg(args, "mimeType"));
                 case "webdavPutEvidence":
                     using (var dav = new WebDavClient(store.ReadCredentials(), null, null, TimeSpan.FromSeconds(90))) return await dav.PutEvidenceAsync(evidence, StringArg(args, "recordId"), StringArg(args, "id"));
+                case "webdavPutEvidenceDeletion":
+                    using (var dav = new WebDavClient(store.ReadCredentials(), null, null, TimeSpan.FromSeconds(90))) return await dav.PutEvidenceDeletionAsync(StringArg(args, "recordId"), StringArg(args, "id"));
+                case "webdavDeleteEvidence":
+                    using (var dav = new WebDavClient(store.ReadCredentials(), null, null, TimeSpan.FromSeconds(90))) return await dav.DeleteEvidenceAsync(StringArg(args, "recordId"), StringArg(args, "id"), StringArg(args, "mimeType"));
                 default: throw new UserError("此操作不受支持。");
             }
         }

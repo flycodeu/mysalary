@@ -48,6 +48,22 @@ public class EvidenceStoreTest {
         rejects(() -> store.add("legacy-guid", png(), "text/plain"));
     }
 
+    @Test public void deletionRemovesOriginalAndPersistsMarkerAcrossRestart() throws Exception {
+        File root = temporary.newFolder();
+        EvidenceStore store = new EvidenceStore(root);
+        byte[] original = png();
+        String id = store.add("record", original, "image/png").getString("id");
+        store.delete("record", id);
+        EvidenceStore reopened = new EvidenceStore(root);
+        assertEquals(0, reopened.list("record").length());
+        assertEquals(id, reopened.listDeleted("record").getString(0));
+        assertFalse(new File(recordDirectory(root, "record"), id + ".png").exists());
+        rejects(() -> reopened.read("record", id));
+        rejects(() -> reopened.add("record", original, "image/png"));
+        reopened.delete("record", id);
+        assertEquals(1, reopened.listDeleted("record").length());
+    }
+
     @Test public void identifiersCannotTraverseAndRecordsDoNotShareMetadata() throws Exception {
         EvidenceStore store = new EvidenceStore(temporary.newFolder());
         for (String record : new String[]{"../../outside", "a/b", "a\\b", "", null, "a.b", "a ", new String(new char[97]).replace('\0', 'a')})

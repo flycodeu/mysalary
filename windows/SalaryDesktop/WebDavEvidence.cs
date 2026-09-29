@@ -15,7 +15,9 @@ namespace SalaryDesktop
     internal sealed partial class WebDavClient
     {
         private static readonly Regex EvidenceName = new Regex(@"\Aevidence-([A-Za-z0-9_-]{1,96})-([a-f0-9]{64})\.(png|jpg)\z");
+        private static readonly Regex DeletedName = new Regex(@"\Aevidence-deleted-([A-Za-z0-9_-]{1,96})-([a-f0-9]{64})\.txt\z");
         private const int MaxEvidenceFiles = 1200;
+        private const string DeletedBody = "deleted-v1\n";
 
         internal static string EvidenceNameFor(string recordId, string id, string mimeType)
         {
@@ -39,6 +41,23 @@ namespace SalaryDesktop
             }).ToList();
         }
 
+        internal static List<Dictionary<string, object>> ParseDeletedListing(string content)
+        {
+            var names = ParseListingNames(content, name => DeletedName.IsMatch(name));
+            if (names.Count > MaxEvidenceFiles) throw new UserError("云端截图删除记录超过 1200 条，请先整理备份。");
+            return names.Select(name => {
+                var match = DeletedName.Match(name);
+                return new Dictionary<string, object> { { "recordId", match.Groups[1].Value }, { "id", match.Groups[2].Value } };
+            }).ToList();
+        }
+
+        private static string DeletedNameFor(string recordId, string id)
+        {
+            EvidenceStore.ValidateRecordId(recordId);
+            if (id == null || !Regex.IsMatch(id, @"\A[a-f0-9]{64}\z")) throw new UserError("原图标识无效。");
+            return "evidence-deleted-" + recordId + "-" + id + ".txt";
+        }
+
         public async Task<Dictionary<string, object>> ListEvidenceAsync()
         {
             using (var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(30)))
@@ -49,19 +68,71 @@ namespace SalaryDesktop
                 request.Content = new StringContent("<d:propfind xmlns:d=\"DAV:\"><d:prop><d:resourcetype/></d:prop></d:propfind>", Encoding.UTF8, "application/xml");
                 using (var response = await SendAsync(request, timeout.Token))
                 {
-                    if (response.StatusCode == HttpStatusCode.NotFound) return EvidenceItems(new List<Dictionary<string, object>>());
+                    if (response.StatusCode == HttpStatusCode.NotFound) return EvidenceItems(new List<Dictionary<string, object>>(), new List<Dictionary<string, object>>());
                     if (response.StatusCode == HttpStatusCode.Conflict)
                     {
                         using (var parent = Request(HttpMethod.Get, FolderUrl))
                         using (var confirmation = await SendAsync(parent, timeout.Token))
                         {
-                            if (confirmation.StatusCode == HttpStatusCode.NotFound) return EvidenceItems(new List<Dictionary<string, object>>());
+                            if (confirmation.StatusCode == HttpStatusCode.NotFound) return EvidenceItems(new List<Dictionary<string, object>>(), new List<Dictionary<string, object>>());
                             CheckStatus(confirmation);
                         }
                     }
                     if ((int)response.StatusCode != 207) CheckStatus(response, false);
-                    return EvidenceItems(ParseEvidenceListing(await ReadBounded(response.Content, timeout.Token, MaxListingBytes)));
+                    var content = await ReadBounded(response.Content, timeout.Token, MaxListingBytes);
+                    return EvidenceItems(ParseEvidenceListing(content), ParseDeletedListing(content));
                 }
+            }
+        }
+
+        public async Task<Dictionary<string, object>> PutEvidenceDeletionAsync(string recordId, string id)
+        {
+            var name = DeletedNameFor(recordId, id);
+            using (var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(45)))
+            {
+                using (var request = Request(new HttpMethod("MKCOL"), FolderUrl))
+                using (var response = await SendAsync(request, timeout.Token))
+                    if (response.StatusCode != HttpStatusCode.Created && response.StatusCode != HttpStatusCode.MethodNotAllowed) CheckStatus(response, false);
+                var existing = await ReadDeletionAsync(name, timeout.Token);
+                if (existing == null)
+                {
+                    using (var request = Request(HttpMethod.Put, FolderUrl + name))
+                    {
+                        request.Headers.TryAddWithoutValidation("If-None-Match", "*");
+                        request.Content = new StringContent(DeletedBody, Encoding.UTF8, "text/plain");
+                        using (var response = await SendAsync(request, timeout.Token))
+                            if (response.StatusCode != HttpStatusCode.OK && response.StatusCode != HttpStatusCode.Created
+                                && response.StatusCode != HttpStatusCode.NoContent && response.StatusCode != HttpStatusCode.PreconditionFailed) CheckStatus(response, false);
+                    }
+                }
+                if (await ReadDeletionAsync(name, timeout.Token) != DeletedBody) throw new UserError("云端截图删除记录校验失败，已停止同步。");
+                return new Dictionary<string, object>();
+            }
+        }
+
+        public async Task<Dictionary<string, object>> DeleteEvidenceAsync(string recordId, string id, string mimeType)
+        {
+            var name = EvidenceNameFor(recordId, id, mimeType);
+            var deletion = DeletedNameFor(recordId, id);
+            using (var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(45)))
+            {
+                if (await ReadDeletionAsync(deletion, timeout.Token) != DeletedBody) throw new UserError("删除标记未同步，云端原图未删除。");
+                using (var request = Request(HttpMethod.Delete, FolderUrl + name))
+                using (var response = await SendAsync(request, timeout.Token))
+                    if (response.StatusCode != HttpStatusCode.NotFound && response.StatusCode != HttpStatusCode.OK
+                        && response.StatusCode != HttpStatusCode.Accepted && response.StatusCode != HttpStatusCode.NoContent) CheckStatus(response, false);
+                return new Dictionary<string, object>();
+            }
+        }
+
+        private async Task<string> ReadDeletionAsync(string name, CancellationToken token)
+        {
+            using (var request = Request(HttpMethod.Get, FolderUrl + name))
+            using (var response = await SendAsync(request, token))
+            {
+                if (response.StatusCode == HttpStatusCode.NotFound) return null;
+                if (response.StatusCode != HttpStatusCode.OK) CheckStatus(response, false);
+                return await ReadBounded(response.Content, token, 32);
             }
         }
 
@@ -146,9 +217,9 @@ namespace SalaryDesktop
             if (EvidenceStore.Hash(downloaded) != id || !downloaded.SequenceEqual(original))
                 throw new UserError("云端已有原图与本机不一致，已停止同步，原文件未覆盖。");
         }
-        private static Dictionary<string, object> EvidenceItems(List<Dictionary<string, object>> items)
+        private static Dictionary<string, object> EvidenceItems(List<Dictionary<string, object>> items, List<Dictionary<string, object>> deleted)
         {
-            return new Dictionary<string, object> { { "items", items } };
+            return new Dictionary<string, object> { { "items", items }, { "deleted", deleted } };
         }
     }
 }

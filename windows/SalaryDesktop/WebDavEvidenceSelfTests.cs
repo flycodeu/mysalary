@@ -25,8 +25,10 @@ namespace SalaryDesktop
                 var item = store.Add("ledger-test", original, "image/png");
                 var id = (string)item["id"];
                 var name = WebDavClient.EvidenceNameFor("ledger-test", id, "image/png");
+                var deletedName = "evidence-deleted-ledger-test-" + id + ".txt";
                 var list = WebDavClient.ParseEvidenceListing(Xml(Item(name) + Item("archive-v1.json")));
                 Assert(list.Count == 1 && (string)list[0]["id"] == id && (string)list[0]["recordId"] == "ledger-test");
+                Assert(WebDavClient.ParseDeletedListing(Xml(Item(deletedName))).Count == 1);
                 Assert(WebDavClient.ParseListing(Xml(Item(name) + Item("archive-v1.json"))).SequenceEqual(new[] { "archive-v1.json" }));
                 foreach (var entry in new[] { Item("https://evil.invalid/" + name), Item("../" + name), Item("%2e%2e/" + name), Item(name) + Item(name), Item(name).Replace("200 OK", "403 Forbidden") })
                     Assert(Rejects(() => WebDavClient.ParseEvidenceListing(Xml(entry))));
@@ -56,6 +58,26 @@ namespace SalaryDesktop
                 using (var dav = new WebDavClient(credentials, new Handler((request, index) => Reply(200, original))))
                     await dav.GetEvidenceAsync(downloadStore, "ledger-test", id, "image/png");
                 Assert(downloadStore.ReadOriginal("ledger-test", id).Bytes.SequenceEqual(original));
+                var marker = Encoding.UTF8.GetBytes("deleted-v1\n");
+                var publishDeletion = new Handler((request, index) => {
+                    if (index == 0) { Assert(request.Method.Method == "MKCOL"); return Reply(405); }
+                    Assert(request.RequestUri.AbsoluteUri == WebDavClient.FolderUrl + deletedName);
+                    if (index == 1) return Reply(404);
+                    if (index == 2) { Assert(request.Method == HttpMethod.Put && request.Headers.GetValues("If-None-Match").Single() == "*"); return Reply(201); }
+                    Assert(index == 3 && request.Method == HttpMethod.Get);
+                    return Reply(200, marker);
+                });
+                using (var dav = new WebDavClient(credentials, publishDeletion)) await dav.PutEvidenceDeletionAsync("ledger-test", id);
+                Assert(publishDeletion.Count == 4);
+                var remove = new Handler((request, index) => {
+                    Assert(request.RequestUri.AbsoluteUri == WebDavClient.FolderUrl + (index == 0 ? deletedName : name));
+                    if (index == 0) { Assert(request.Method == HttpMethod.Get); return Reply(200, marker); }
+                    Assert(request.Method == HttpMethod.Delete); return Reply(204);
+                });
+                using (var dav = new WebDavClient(credentials, remove)) await dav.DeleteEvidenceAsync("ledger-test", id, "image/png");
+                Assert(remove.Count == 2);
+                using (var dav = new WebDavClient(credentials, new Handler((request, index) => Reply(404))))
+                    Assert(await RejectsAsync(() => dav.DeleteEvidenceAsync("ledger-test", id, "image/png")));
                 foreach (var status in new[] { 302, 307, 401, 403, 429 }) {
                     var failure = new Handler((request, index) => Reply(status));
                     using (var dav = new WebDavClient(credentials, failure)) Assert(await RejectsAsync(() => dav.GetEvidenceAsync(downloadStore, "ledger-test", id, "image/png")));

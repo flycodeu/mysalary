@@ -302,7 +302,10 @@ public class SalaryNativePlugin extends Plugin {
                 JSONArray items = new JSONArray();
                 for (WebDavClient.RemoteEvidence item : webdav.listEvidence(value.username, value.password))
                     items.put(new JSONObject().put("recordId", item.recordId).put("id", item.id).put("mimeType", item.mimeType));
-                call.resolve(new JSObject().put("items", items));
+                JSONArray deleted = new JSONArray();
+                for (WebDavClient.RemoteDeletion item : webdav.listDeletedEvidence(value.username, value.password))
+                    deleted.put(new JSONObject().put("recordId", item.recordId).put("id", item.id));
+                call.resolve(new JSObject().put("items", items).put("deleted", deleted));
             } catch (Exception error) { rejectSafe(call, error, "读取云端原图失败，请重试", "EVIDENCE_SYNC_READ_FAILED"); }
         });
     }
@@ -333,10 +336,48 @@ public class SalaryNativePlugin extends Plugin {
     }
 
     @PluginMethod
+    public void webdavPutEvidenceDeletion(PluginCall call) {
+        networkExecutor.execute(() -> {
+            try {
+                SyncCredentialStore.Credentials value = requireCredentials();
+                webdav.putEvidenceDeletion(call.getString("recordId"), call.getString("id"), value.username, value.password);
+                call.resolve();
+            } catch (Exception error) { rejectSafe(call, error, "同步截图删除记录失败，请重试", "EVIDENCE_SYNC_WRITE_FAILED"); }
+        });
+    }
+
+    @PluginMethod
+    public void webdavDeleteEvidence(PluginCall call) {
+        networkExecutor.execute(() -> {
+            try {
+                SyncCredentialStore.Credentials value = requireCredentials();
+                webdav.deleteEvidence(call.getString("recordId"), call.getString("id"), call.getString("mimeType"), value.username, value.password);
+                call.resolve();
+            } catch (Exception error) { rejectSafe(call, error, "清理云端截图失败，请重试", "EVIDENCE_SYNC_WRITE_FAILED"); }
+        });
+    }
+
+    @PluginMethod
     public void listEvidence(PluginCall call) {
         storageExecutor.execute(() -> {
             try { call.resolve(new JSObject().put("items", evidence().list(call.getString("recordId")))); }
             catch (Exception error) { rejectSafe(call, error, "读取原图失败，已有文件已保留", "EVIDENCE_READ_FAILED"); }
+        });
+    }
+
+    @PluginMethod
+    public void listDeletedEvidence(PluginCall call) {
+        storageExecutor.execute(() -> {
+            try { call.resolve(new JSObject().put("ids", evidence().listDeleted(call.getString("recordId")))); }
+            catch (Exception error) { rejectSafe(call, error, "读取截图删除记录失败", "EVIDENCE_READ_FAILED"); }
+        });
+    }
+
+    @PluginMethod
+    public void deleteEvidence(PluginCall call) {
+        storageExecutor.execute(() -> {
+            try { evidence().delete(call.getString("recordId"), call.getString("id")); call.resolve(); }
+            catch (Exception error) { rejectSafe(call, error, "删除截图失败，请重试", "EVIDENCE_DELETE_FAILED"); }
         });
     }
 

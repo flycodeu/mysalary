@@ -49,6 +49,7 @@ final class EvidenceStore {
         String id = hash(bytes);
         File directory = recordDirectory(recordId, true);
         File metadata = child(directory, id + ".json");
+        if (child(directory, id + ".deleted").exists()) throw invalid("这张截图已删除，不能重复添加");
         if (metadata.exists()) {
             JSONObject previous = readItem(directory, recordId, id);
             readBytes(directory, previous);
@@ -75,6 +76,7 @@ final class EvidenceStore {
         for (File file : files) {
             String id = file.getName().substring(0, file.getName().length() - 5);
             validateId(id);
+            if (child(directory, id + ".deleted").exists()) continue;
             JSONObject item = readItem(directory, recordId, id);
             File original = child(directory, id + extension(item.getString("mimeType")));
             if (!original.isFile() || original.length() != item.getInt("sizeBytes")) throw invalid("部分原图无法读取，已有文件已保留");
@@ -90,8 +92,39 @@ final class EvidenceStore {
         validateRecordId(recordId);
         validateId(id);
         File directory = recordDirectory(recordId, false);
+        if (child(directory, id + ".deleted").exists()) throw invalid("这张截图已删除");
         JSONObject item = readItem(directory, recordId, id);
         return new ReadResult(readBytes(directory, item), item.getString("mimeType"));
+    }
+
+    synchronized JSONArray listDeleted(String recordId) throws IOException {
+        validateRecordId(recordId);
+        File directory = recordDirectory(recordId, false);
+        JSONArray result = new JSONArray();
+        if (!directory.exists()) return result;
+        File[] files = directory.listFiles((parent, name) -> name.endsWith(".deleted"));
+        if (files == null) throw new IOException("Evidence directory unavailable");
+        Arrays.sort(files, Comparator.comparing(File::getName));
+        for (File file : files) {
+            String id = file.getName().substring(0, file.getName().length() - 8);
+            validateId(id);
+            if (!Arrays.equals(readFile(child(directory, file.getName()), 64), "deleted-v1\n".getBytes(StandardCharsets.UTF_8)))
+                throw invalid("截图删除记录损坏，已停止同步");
+            result.put(id);
+        }
+        return result;
+    }
+
+    synchronized void delete(String recordId, String id) throws IOException, JSONException {
+        validateRecordId(recordId); validateId(id);
+        File directory = recordDirectory(recordId, true);
+        File marker = child(directory, id + ".deleted");
+        if (!marker.exists()) writeNew(marker, "deleted-v1\n".getBytes(StandardCharsets.UTF_8));
+        File metadata = child(directory, id + ".json");
+        for (String extension : new String[]{".png", ".jpg", ".json"}) {
+            File file = child(directory, id + extension);
+            if (file.exists() && !file.delete()) throw invalid("截图删除未完成，请重试");
+        }
     }
 
     private byte[] readBytes(File directory, JSONObject item) throws IOException, JSONException {

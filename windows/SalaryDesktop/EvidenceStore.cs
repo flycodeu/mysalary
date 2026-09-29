@@ -49,6 +49,7 @@ namespace SalaryDesktop
             {
                 var directory = RecordDirectory(recordId, true);
                 var metadata = Child(directory, id + ".json");
+                if (File.Exists(Child(directory, id + ".deleted"))) throw new UserError("这张截图已删除，不能重复添加。");
                 if (File.Exists(metadata))
                 {
                     var existing = ReadItem(directory, recordId, id);
@@ -89,6 +90,7 @@ namespace SalaryDesktop
                 {
                     var id = Path.GetFileNameWithoutExtension(path);
                     ValidateId(id);
+                    if (File.Exists(Child(directory, id + ".deleted"))) continue;
                     var item = ReadItem(directory, recordId, id);
                     var imagePath = Child(directory, id + Extension((string)item["mimeType"]));
                     if (!File.Exists(imagePath) || new FileInfo(imagePath).Length != (int)item["sizeBytes"]) throw new UserError("部分原图无法读取，已有文件已保留。");
@@ -111,8 +113,40 @@ namespace SalaryDesktop
             lock (gate)
             {
                 var directory = RecordDirectory(recordId, false);
+                if (File.Exists(Child(directory, id + ".deleted"))) throw new UserError("这张截图已删除。");
                 var item = ReadItem(directory, recordId, id);
                 return new EvidencePayload(ReadBytes(directory, item), (string)item["mimeType"]);
+            }
+        }
+
+        internal IList<string> ListDeleted(string recordId)
+        {
+            ValidateRecordId(recordId);
+            lock (gate)
+            {
+                var directory = RecordDirectory(recordId, false);
+                if (!Directory.Exists(directory)) return new List<string>();
+                return Directory.GetFiles(directory, "*.deleted").Select(path => {
+                    var id = Path.GetFileNameWithoutExtension(path);
+                    ValidateId(id);
+                    if (File.ReadAllText(path, Encoding.UTF8) != "deleted-v1\n") throw new UserError("截图删除记录损坏，已停止同步。");
+                    return id;
+                }).OrderBy(id => id, StringComparer.Ordinal).ToList();
+            }
+        }
+
+        internal void Delete(string recordId, string id)
+        {
+            ValidateRecordId(recordId); ValidateId(id);
+            lock (gate)
+            {
+                var directory = RecordDirectory(recordId, true);
+                var marker = Child(directory, id + ".deleted");
+                if (!File.Exists(marker)) JsonData.WriteAtomic(marker, Encoding.UTF8.GetBytes("deleted-v1\n"), null);
+                var metadata = Child(directory, id + ".json");
+                File.Delete(Child(directory, id + ".png"));
+                File.Delete(Child(directory, id + ".jpg"));
+                File.Delete(metadata);
             }
         }
 

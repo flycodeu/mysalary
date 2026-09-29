@@ -28,10 +28,16 @@ export async function evidenceDigest(bytes: ArrayBuffer): Promise<string> {
 
 function openDatabase(): Promise<IDBDatabase> {
   return database ??= new Promise((resolve, reject) => {
-    const request = indexedDB.open("salary-evidence", 1);
+    const request = indexedDB.open("salary-evidence", 2);
     request.onupgradeneeded = () => {
-      const store = request.result.createObjectStore("images", { keyPath: ["recordId", "id"] });
-      store.createIndex("recordId", "recordId");
+      if (!request.result.objectStoreNames.contains("images")) {
+        const store = request.result.createObjectStore("images", { keyPath: ["recordId", "id"] });
+        store.createIndex("recordId", "recordId");
+      }
+      if (!request.result.objectStoreNames.contains("deleted")) {
+        const store = request.result.createObjectStore("deleted", { keyPath: ["recordId", "id"] });
+        store.createIndex("recordId", "recordId");
+      }
     };
     request.onsuccess = () => resolve(request.result);
     request.onerror = () => { database = undefined; reject(new Error("无法打开截图档案")); };
@@ -67,6 +73,35 @@ export async function listEvidence(recordId: string): Promise<EvidenceItem[]> {
   }
   if (!Array.isArray(items)) throw new Error("截图列表不完整");
   return items.map((item) => validateEvidenceItem(item, recordId)).sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+}
+
+export async function listDeletedEvidence(recordId: string): Promise<string[]> {
+  validateRecordId(recordId);
+  let ids: unknown[];
+  if (isNative) ids = (await hostCall<{ ids: unknown[] }>("listDeletedEvidence", { recordId })).ids;
+  else {
+    const db = await openDatabase();
+    ids = await new Promise<string[]>((resolve, reject) => {
+      const request = db.transaction("deleted").objectStore("deleted").index("recordId").getAll(recordId);
+      request.onsuccess = () => resolve(request.result.map((item: { id: string }) => item.id));
+      request.onerror = () => reject(new Error("无法读取截图删除记录"));
+    });
+  }
+  if (!Array.isArray(ids) || ids.some((id) => typeof id !== "string" || !/^[a-f0-9]{64}$/.test(id))) throw new Error("截图删除记录无效");
+  return ids as string[];
+}
+
+export async function deleteEvidence(recordId: string, id: string): Promise<void> {
+  validateRecordId(recordId); validateId(id);
+  if (isNative) { await hostCall("deleteEvidence", { recordId, id }); return; }
+  const db = await openDatabase();
+  await new Promise<void>((resolve, reject) => {
+    const tx = db.transaction(["images", "deleted"], "readwrite");
+    tx.objectStore("deleted").put({ recordId, id });
+    tx.objectStore("images").delete([recordId, id]);
+    tx.oncomplete = () => resolve();
+    tx.onerror = tx.onabort = () => reject(new Error("删除截图失败，请重试"));
+  });
 }
 
 export function evidenceDataUrl(blob: Blob): Promise<string> {
@@ -122,6 +157,7 @@ export async function addEvidenceFiles(recordId: string, files: File[]): Promise
     const item = validateEvidenceItem({ id: await evidenceDigest(bytes), recordId, mimeType, sizeBytes: image.size,
       width, height, createdAt: new Date().toISOString() }, recordId);
     const db = await openDatabase();
+    if ((await listDeletedEvidence(recordId)).includes(item.id)) throw new Error("这张截图已删除，不能重复添加");
     await new Promise<void>((resolve, reject) => {
       const tx = db.transaction("images", "readwrite");
       const store = tx.objectStore("images");
