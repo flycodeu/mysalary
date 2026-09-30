@@ -615,7 +615,7 @@ if (!sourceMatches(source)) {
 }
 const eventHash = hash(JSON.stringify({specificationReceipts,documentReceipts,evidenceManifest}));
 await api(`${base}/archive/events`,"POST",{operationId:`salary-current-${eventHash.slice(0,32)}`,type:evidence?"RESULT":"DESIGN",title:evidence?`${targetVersion} 实现与分层验证已登记，Owner 未验收`:`${targetVersion} 双端方案已取代旧 OCR 规划`,
-  content:`当前范围：Windows 采集/核算/整合，双端工资档案、原始截图与看板，共享 JSON/WebDAV，设置、居中退出及覆盖升级。\n\n${evidence?.summary ?? "本轮同步当前设计边界；最终实现与测试证据后续独立登记。Android 真机覆盖升级及真实坚果云原图双端往返尚未验证，Owner 未验收。"}\n\n保留 ${before.runs.length} 条历史 Run、${before.tasks.length} 项历史 Task；旧设计与过时文档通过新修订取代，未删除不可变证据。元数据 API 不支持版本保护的项目描述与旧树标题未强行改写；当前正文明确其历史性质。\n\n${ownership}`,
+  content:`当前范围：Windows 采集/核算/整合，双端工资档案、原始截图与看板，共享 JSON/WebDAV，设置、居中退出及覆盖升级。\n\n${evidence?.summary ?? "本轮同步当前设计边界；最终实现与测试证据后续独立登记。Android 真机覆盖升级及真实坚果云原图双端往返尚未验证，Owner 未验收。"}\n\n保留 ${before.runs.length} 条历史 Run、${before.tasks.length} 项历史 Task；旧设计与过时文档通过新修订取代，未删除不可变证据。旧树标题仍保留为历史名称；项目卡片简介在 ForgeFlow 项目设置中独立维护。\n\n${ownership}`,
   documentRevisionIds:documentReceipts.map((item)=>item.currentRevisionId)});
 const [after, archiveAfter] = await Promise.all([api(base),api(`${base}/archive/export`)]);
 if (!sourceMatches(after.sources.find((item)=>item.id===source.id))) throw new Error("Source readback mismatch.");
