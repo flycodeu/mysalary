@@ -110,10 +110,20 @@ const modules = [
     acceptance: "领域测试、生产构建与实际浏览器交互通过；敏感文件未纳入 Git；ForgeFlow 回读与版本校验通过，保留原历史 Run。",
   },
 ];
-const overview = [`# ${heading}`, "## 当前职责与范围", ...modules.map((item) => `- ${item.code} ${item.name}：${item.purpose}`),
-  "## 与旧方案的关系", "旧的 Android 优先、手机 OCR、逐行人工核对及将桌面/同步推迟到未来的规划已经被本方案取代。当前范围以本文和 D01–D06 为准；旧功能树名称属于历史索引，最新设计正文说明承接关系。",
-  "## 数据与验收约束", "金额为整数分，未知为 null；来源总额、计算值和差额分开。保留用户原始数据，不补零、不抄上月、不凑平。", ownership,
-  "## 维护入口", "由 scripts/forgeflow-sync.mjs 自包含生成当前方案；不依赖已归档的旧 Markdown。正式验证结果单独存为当前验证登记；历史 Run 和已验证文档保持不可变。",
+const overview = [
+  "# 薪迹：个人工资档案的来由与目标",
+  "## 为什么创建",
+  "工资页通常按月份展示，原始页面由公司系统掌握；一张截图能留住当时看到的内容，却不便逐月查找、核对金额或在电脑与手机之间继续使用。项目要解决的不是再做一张工资表，而是把用户有权查看的工资来源、原始凭证、可解释的计算和跨设备档案连成一条可靠路径。早期方案从 Android 截图与 OCR 出发，反映了先保住原图、再整理数据的动机；这不是对现有用户损失、人工耗时或 OCR 精度的量化结论。",
+  "## 方案怎样形成",
+  "最初规划为 Android 优先：截图进入应用，保留原图，再经本地 OCR 与人工核对生成记录。后来改用 Windows 从用户已经打开并展开的飞书工资页读取可访问文本，得到月份、标签和金额来源；原始截图仍由用户主动保存，作为独立凭证。这样把采集、工资语义核算和阅读分开处理，也避免把截图识别结果当作未经核对的事实。手机现阶段用于查看、导入、同步和保存截图；直接读取其他应用页面仍是待真机验证的候选，不属于当前采集主链路。",
+  "## 使用者如何完成一次完整记录",
+  "用户在飞书展开目标月份，在 Windows 薪迹采集页面内容；程序校验结构化来源并保存，同内容重复采集不增加档案，同月不同内容保留来源差异。共享领域规则把金额按应发与扣款解释，分别保存原载总额、计算值和未解释差额。用户可以给这条记录附上真实工资页截图，在档案和年度看板中查阅；需要换端时，通过工资 JSON 或坚果云 WebDAV 合并账本，后者还可同步关联原图及其删除状态。读取、采集或网络失败不得把已有账本变成空数据。",
+  "## 设计原则与边界",
+  "工资金额以整数分保存；未知值保持 null，不能补零、抄上月或改写实发金额凑平。原始来源、推导结果与截图各自保留，截图不从文字重绘；同月多来源不被简单覆盖。个人工具不引入自建账号或业务服务器，Windows 与 Android 共用领域规则，原生能力通过各自桥接实现。工资 JSON 不包含原图；云端工资和图片未做端到端加密，不能把系统凭据保护当成档案加密。",
+  "## 要形成的工程认识",
+  "这项工作用于理解跨应用采集的可访问范围、来源数据与业务解释的分离、离线账本与原子保存、跨设备合并及删除传播、原生桥接和覆盖升级。每个环节都应能追溯输入、变换、持久结果和失败后的恢复办法，而不是仅记住使用了哪种框架。",
+  "## 当前适用范围与证据",
+  `本文描述 ${targetVersion} 的产品动因和现行方案；具体功能与状态看项目功能及 D01–D06 档案，测试、真实 Windows/Android、真实坚果云和 Owner 验收分别看验证登记。旧 Android OCR 与 P0–P4 阶段稿留在历史修订，不再当作当前路线。依据为本仓库 README.md、当前源码与本项目既有背景修订；未做用户访谈或真实使用成本测量。`,
 ].join("\n\n");
 const contentFor = (item) => [`# ${item.code} ${item.name}`, `目标版本：${targetVersion}。${ownership}`, "## 用户结果", item.purpose,
   "## 实施规则", ...item.design.map((line) => `- ${line}`), "## 源码职责", ...item.files.map((file) => `- ${file}`),
@@ -145,13 +155,294 @@ const mobileCaptureDesign = [
   "https://developer.android.com/guide/topics/ui/accessibility/service",
   "https://developer.android.com/reference/android/webkit/WebView",
 ].join("\n\n");
+const requirements = [
+  `# ${heading}：需求与验收边界`,
+  "## 用户任务",
+  "1. 在电脑已打开的飞书工资页采集一个完整月份，保留原载字段和金额；失败时明确原因，不生成看似正常的空记录。",
+  "2. 打开档案即可先看到实发，再查看应发、扣款、来源截图及无法解释的差额；不需要逐行手输，也不让计算结果伪装成原载字段。",
+  "3. 在 Windows 和 Android 查看同一份工资资料，可主动导出或同步；重复、删除、恢复及网络中断不能悄悄抹掉已有记录或原图。",
+  "## 功能范围与可观察结果",
+  "| 范围 | 用户可见结果 | 关键失败或边界 |",
+  "| --- | --- | --- |",
+  "| D01 采集 | 已展开月份生成有来源的记录，同内容去重，同月异内容并存 | 页面未展开、字段不完整或飞书会话不可用时拒绝入账 |",
+  "| D02 核算与账本 | 应发、扣款、实发和差额可解释；重启仍能读取 | 负数、未知值及汇总子项不重复计算；读写失败不清空旧账本 |",
+  "| D03 档案与看板 | 月份、年度趋势和原始截图可查；隐藏金额同时遮蔽关联信息 | 同月多来源统计去重；截图按记录隔离，逐张删除需确认 |",
+  "| D04 导入与同步 | JSON 合并工资；坚果云同步账本和关联原图 | 损坏文件不覆盖本地；删除标记先传播，部分失败可重试 |",
+  "| D05 安装与更新 | 设置中检查新版本并按平台下载安装 | 保存或同步中不安装；安装身份、下载摘要及真实覆盖升级独立验证 |",
+  "| D06 维护与交付 | 当前设计、源码、测试与发布事实可回查 | 历史 Run、旧方案和 Owner 验收不能被新修订自动改写 |",
+  "## 不可省略的质量规则",
+  "金额按整数分存储，未知为 null；原载总额、计算值、差额和原图分别留存。工资 JSON 不包含截图，云端文件不能宣称端到端加密。浏览器预览与原生私有档案分开，预览通过不代表 Windows 或 Android 原生行为通过。用户确认删除原图后保留删除标记，旧客户端不理解删除标记时不能混用。",
+  "## 验收如何记录",
+  "D01–D06 项目档案分别保存操作规则、源码入口和具体检查点。本页定义需要达到的行为；自动化、浏览器、真实飞书、Windows、Android、真实坚果云及 Owner 结论在验证登记中逐项记录。Android 直接读取 HR 页面尚待真机验证，完整离线备份（含原图）不是当前 JSON 导出的能力。",
+].join("\n\n");
+const research = [
+  `# ${heading}：问题调研与方案取舍`,
+  "## 要回答的问题",
+  "工资来源能否稳定读取？原载金额与程序计算怎样区分？原图与跨设备档案在失败或删除时如何保持一致？这些问题决定采集和同步方式，不能靠技术名称代替实验。",
+  "| 问题 | 已有依据与现行取舍 | 仍需取得的证据 |",
+  "| --- | --- | --- |",
+  "| 从工资页采集 | 独立网页不能继承飞书桌面登录上下文；当前使用用户已打开、已展开页面的 Windows 可访问文本，不绕过身份验证 | 真实飞书页面不同月份与字段、滚动和折叠、失败恢复的逐项记录 |",
+  "| 截图 OCR | 早期 Android 优先方案把原图保存、OCR 和人工核对串起来；当前主流程改用结构化文本，OCR 历史测试不能代表现行采集准确率 | 如再次考虑 OCR，应重新比较字段完整性、人工修正量和真实设备结果 |",
+  "| 工资语义 | 应发、扣款与实发可能只给出部分明细；纯函数规则保留原载总额、推导扣款和未解释差额，不自动补齐 | 负补发、汇总子项、未知值、同月多来源及真实样本复核 |",
+  "| 跨端共享 | JSON 负责工资；WebDAV 采用固定目录、按哈希命名的追加文件与回读校验，原图和删除标记独立同步 | 真实坚果云、弱网、双端并发、原图删除及重试往返 |",
+  "| Android 直接采集 | 只能作为候选；其他应用页面的节点可见性、授权方式和字段完整性尚无真机结果 | 目标设备上经用户主动授权的页面探测，再决定是否实现入口 |",
+  "## 决策与未决事项",
+  "现行数据入口是 Windows 采集，手机负责阅读、导入、同步与用户主动保存的截图。原图作为独立证据保存，不能根据结构化文字重绘。薪迹没有自建服务器，也未提供含原图的完整离线恢复包；凭据由设备密钥能力保护，但云端工资和图片没有端到端加密。真实 HR 页面覆盖率、跨设备持久性和云端恢复能力仍须按环境记录，不用合成测试替代。",
+  "## 继续阅读",
+  "D01、D02、D04 档案分别给出采集、计算与同步规则；Android 直接采集另有待真机验证材料。本页记录问题、证据和取舍，旧 OCR 候选与阶段稿保留在历史修订，不作为当前实施指令。",
+].join("\n\n");
+const architectureMap = {
+  "version": 1,
+  "nodes": [
+    {
+      "id": "salary-ui",
+      "label": "Windows / Android 共用界面",
+      "layer": "用户界面",
+      "summary": "Vue 界面展示工资档案、核对、年度看板、原图、同步与设置；通过平台桥接使用原生能力。",
+      "status": "implemented",
+      "technology": [
+        "Vue 3",
+        "TypeScript",
+        "WebView2",
+        "Capacitor"
+      ],
+      "source": "src/App.vue"
+    },
+    {
+      "id": "salary-feishu",
+      "label": "电脑飞书工资页",
+      "layer": "外部来源",
+      "summary": "Windows 采集要求用户先打开并展开指定工资页；没有从服务端直接读取工资数据的接口。",
+      "status": "implemented",
+      "technology": [
+        "飞书桌面端",
+        "Windows UI Automation"
+      ],
+      "source": "windows/SalaryCollector/Program.cs"
+    },
+    {
+      "id": "salary-screenshot",
+      "label": "手机系统截图与用户选择",
+      "layer": "外部来源",
+      "summary": "Android 由用户在工资页自行截屏，再选择添加到对应记录；应用不能直接读取或静默截取其他应用页面。",
+      "status": "implemented",
+      "technology": [
+        "Android 系统截图",
+        "系统图片选择器"
+      ],
+      "source": "README.md"
+    },
+    {
+      "id": "salary-collector",
+      "label": "Windows 工资页采集器",
+      "layer": "Windows 本机能力",
+      "summary": "读取已展开页面的可访问性文本，校验月份与字段后形成结构化来源；这条路线不依赖截图 OCR。",
+      "status": "implemented",
+      "technology": [
+        ".NET Framework",
+        "Windows UI Automation"
+      ],
+      "source": "windows/SalaryCollector/Program.cs"
+    },
+    {
+      "id": "salary-win-host",
+      "label": "Windows 桌面宿主",
+      "layer": "Windows 本机能力",
+      "summary": "WinForms/WebView2 消息桥负责采集请求、本地账本和原图、文件操作及 WebDAV 调用。",
+      "status": "implemented",
+      "technology": [
+        "WinForms",
+        "WebView2",
+        ".NET Framework"
+      ],
+      "source": "windows/SalaryDesktop/Program.cs"
+    },
+    {
+      "id": "salary-android-host",
+      "label": "Android 原生插件",
+      "layer": "Android 本机能力",
+      "summary": "Capacitor 插件承接文件、原图、凭据、WebDAV 和系统安装器能力；Android 不执行当前 Windows 飞书文本采集。",
+      "status": "implemented",
+      "technology": [
+        "Capacitor",
+        "Java",
+        "Android SDK"
+      ],
+      "source": "android/app/src/main/java/com/flylabs/salary/SalaryNativePlugin.java"
+    },
+    {
+      "id": "salary-domain",
+      "label": "共享工资领域规则",
+      "layer": "共享逻辑",
+      "summary": "解析版本化账本并执行金额核算、差额解释和合并；金额使用整数分，未知金额保留 null。",
+      "status": "implemented",
+      "technology": [
+        "TypeScript",
+        "纯函数"
+      ],
+      "source": "src/domain/ledger.ts"
+    },
+    {
+      "id": "salary-win-data",
+      "label": "Windows 私有数据目录",
+      "layer": "本机数据",
+      "summary": "保存工资账本、来源和原始截图；同步凭据由 DPAPI 本机保护，数据目录与安装目录分离。",
+      "status": "implemented",
+      "technology": [
+        "原子文件写入",
+        "DPAPI"
+      ],
+      "source": "windows/SalaryDesktop/LocalStore.cs"
+    },
+    {
+      "id": "salary-android-data",
+      "label": "Android 应用私有数据",
+      "layer": "本机数据",
+      "summary": "保存工资账本与已关联原图；应用卸载会移除本机数据，同步密码由 Keystore 本机保护。",
+      "status": "implemented",
+      "technology": [
+        "Android 私有目录",
+        "Keystore"
+      ],
+      "source": "android/app/src/main/java/com/flylabs/salary/LedgerStore.java"
+    },
+    {
+      "id": "salary-webdav",
+      "label": "坚果云 WebDAV 同步",
+      "layer": "外部同步",
+      "summary": "双端已实现主动同步账本、原图及删除标记的代码；真实坚果云双端往返与真机持久化仍需独立验证。没有薪迹自建后端。",
+      "status": "implemented",
+      "technology": [
+        "WebDAV",
+        "HTTPS",
+        "SHA-256"
+      ],
+      "source": "src/platform/sync.ts"
+    }
+  ],
+  "edges": [
+    {
+      "from": "salary-feishu",
+      "to": "salary-collector",
+      "label": "读取已展开页面的可访问性文本",
+      "status": "implemented"
+    },
+    {
+      "from": "salary-collector",
+      "to": "salary-win-host",
+      "label": "返回经校验的结构化工资来源",
+      "status": "implemented"
+    },
+    {
+      "from": "salary-ui",
+      "to": "salary-win-host",
+      "label": "WebView2 消息桥请求本机操作",
+      "status": "implemented"
+    },
+    {
+      "from": "salary-ui",
+      "to": "salary-android-host",
+      "label": "Capacitor 插件请求本机操作",
+      "status": "implemented"
+    },
+    {
+      "from": "salary-ui",
+      "to": "salary-domain",
+      "label": "账本解析、核算、合并与展示",
+      "status": "implemented"
+    },
+    {
+      "from": "salary-win-host",
+      "to": "salary-win-data",
+      "label": "持久化账本、来源和原图",
+      "status": "implemented"
+    },
+    {
+      "from": "salary-screenshot",
+      "to": "salary-android-host",
+      "label": "用户选择原始截图后复制保存",
+      "status": "implemented"
+    },
+    {
+      "from": "salary-android-host",
+      "to": "salary-android-data",
+      "label": "持久化账本和原图",
+      "status": "implemented"
+    },
+    {
+      "from": "salary-win-host",
+      "to": "salary-webdav",
+      "label": "WebDAV 主动同步代码；真实云往返待验",
+      "status": "implemented"
+    },
+    {
+      "from": "salary-android-host",
+      "to": "salary-webdav",
+      "label": "WebDAV 主动同步代码；真机往返待验",
+      "status": "implemented"
+    }
+  ]
+};
+const architectureMapBlock = ["```forgeflow-map", JSON.stringify(architectureMap, null, 2), "```"].join("\n");
+const architecture = [
+  `# ${heading}：整体架构与数据流`,
+  "## 阅读顺序",
+  "先看下方项目总图理解模块和交互，再沿一次工资记录查看来源、计算、保存、同步与阅读。图中的边表示数据或调用关系；是否已在真实设备、真实云端验收仍以验证登记为准。",
+  architectureMapBlock,
+  "## 一条记录怎样流动",
+  "1. 用户在飞书展开月份。Windows 采集器读取当前可访问文本，产出带月份、字段、金额原文和来源标识的结构化候选；不完整时停止，不让空值假扮金额。",
+  "2. 共享领域层用整数分解析和核算，生成应发、扣款、实发与差额。来源数据和推导结果分别进入本机账本；写入走原子替换与备份，读取失败呈现错误而非空档案。",
+  "3. 用户主动保存真实截图。原图进入平台私有目录，与工资记录以 ID 和哈希关联；界面只拿受控数据，不直接读取原生路径。删除原图产生持久删除状态。",
+  "4. 导出 JSON 只携带工资账本；坚果云 WebDAV 在固定目录交换工资增量、原图和删除标记。先合并工资，再处理已知记录的截图；上传后回读哈希，失败保留本机已成功部分，供下次重试。",
+  "5. Android 用同一套领域规则和 Vue 界面阅读、查看看板及截图，经 Capacitor 原生桥接持久化和导入。Windows 与 Android 的安装更新各走对应系统入口，不参与工资计算链路。",
+  "## 模块责任与边界",
+  "| 模块 | 负责 | 边界 |",
+  "| --- | --- | --- |",
+  "| Windows Collector / Desktop | 飞书可访问文本采集、文件与截图、本机保存及 WebDAV 桥接 | 不把未展开或无法证明完整的页面当作工资记录 |",
+  "| 共享 Vue/TypeScript 领域层 | 金额语义、核算、账本合并、年度统计与交互 | 不读取原生文件路径，不保存平台凭据 |",
+  "| Android 原生桥接 | 私有文件、截图导入、凭据、网络及系统安装器 | 不静默读取其他应用的工资页面 |",
+  "| JSON / WebDAV | 数据交换与冲突合并 | JSON 无截图；云端内容未端到端加密 |",
+  "## 当前实现与待验证",
+  "上述组件和链路按 0.5.2 源码与设计说明整理；浏览器、合成 WebDAV 与安装器测试各有独立证据。真实 Android 覆盖升级、真实坚果云双端原图往返及带数据的 Windows 更新仍应在对应验证登记中核对，不能仅凭图上的连线视为通过。细节见 D01–D06 档案。",
+].join("\n\n");
+const technology = [
+  `# ${heading}：技术选择与学习路径`,
+  "## 当前选择与原因",
+  "| 位置 | 当前技术 | 为什么在此使用 | 要掌握的边界 |",
+  "| --- | --- | --- | --- |",
+  "| 共享界面和规则 | Vue 3、TypeScript、Capacitor | 一套工资语义与交互在 Windows WebView2 和 Android 壳内复用 | Web 预览与原生私有存储不是同一环境；UI 不直接读原生路径 |",
+  "| Windows 采集与宿主 | .NET Framework、WinForms、系统 WebView2、可访问性接口 | 从用户已打开的飞书页读取文本，并承载本机文件与截图操作 | 飞书登录上下文不能由独立网页自动继承；采集按需运行 |",
+  "| 工资领域 | TypeScript 纯函数、整数分、版本化账本 | 把来源金额、核算和展示分开，让异常与差额可回溯 | null 表示未知；负值、汇总去重和多来源不能靠 UI 修正 |",
+  "| 本机数据 | Windows 本机文件与原子保存、Android 私有文件 | 安装目录和档案目录分离，写入失败可恢复 | 浏览器本地存储只是预览；卸载 Android 会删除私有数据 |",
+  "| 跨端同步 | JSON、WebDAV、SHA-256、DPAPI / Android Keystore | 不自建业务服务器，合并工资并同步关联原图 | 云端内容无端到端加密；摘要校验、部分失败和删除标记必须实际验证 |",
+  "| 更新交付 | GitHub Release、Windows 安装助手、Android 系统安装器 | 在设置中发现版本、下载并交给平台升级 | 代码构建、发布、下载校验和真实覆盖升级是不同证据 |",
+  "## 学习顺序",
+  "先从一条真实来源跟踪 `windows/SalaryCollector/Program.cs` → `src/domain/capture.ts` → `src/domain/salaryRules.ts` / `src/domain/reconcile.ts` → `src/domain/ledger.ts`。再分别追 `windows/SalaryDesktop/LocalStore.cs` 与 Android 原生 `LedgerStore.java` 的持久化和重启行为；`src/platform/ledgerStore.ts` 的 IndexedDB 分支仅用于浏览器预览，原生分支通过 `hostCall` 读写私有账本。最后沿 `src/platform/sync.ts`、`src/platform/evidenceSync.ts` 观察工资和原图如何合并、验证、删除和重试。界面从 `src/App.vue` 与档案/看板/原图组件进入，原生能力分别在 `windows/SalaryDesktop/` 和 `android/app/src/main/java/com/flylabs/salary/`。",
+  "## 选型的代价与下一步验证",
+  "复用 Web UI 减少重复业务规则，但必须维护两套原生桥接与升级路径；WebDAV 避免自建服务器，却要自己处理并发、哈希、目录约束及恢复；结构化采集减少 OCR 主链路的不确定性，但真实飞书页面和不同月份仍需采集覆盖测试。不要把 Android 直接采集、完整离线备份或云端端到端加密写成已交付能力。技术使用事实以当前源码和 README.md 为准，验收以独立记录为准。",
+].join("\n\n");
 const currentSpecs = [
   { kind: "background", content: overview },
-  { kind: "requirements", content: [`# ${heading}：需求与验证`, ...modules.map((item) => `## ${item.code} ${item.name}\n\n${item.purpose}\n\n验收：${item.acceptance}`), ownership].join("\n\n") },
-  { kind: "research", content: `# 结构化采集可行性与旧 OCR 方案取代说明\n\n${contentFor(modules[0])}\n\n## 可行性证据边界\n\n独立网页受飞书会话限制，不据此绕过认证。使用用户已打开的桌面页面读取可访问文本。模型识别准确率不再是新流程的数据来源；真实页面覆盖月份、采集稳定性和合计校验以实际结果为准。旧 OCR 候选调研保存在本栏历史修订中。\n\n${mobileCaptureDesign}` },
-  { kind: "architecture", content: [`# ${heading}：架构`, "Windows 采集 → 结构化来源 → 共享领域规则与账本 → JSON / WebDAV → Android 阅读。", contentFor(modules[1]), contentFor(modules[3]), contentFor(modules[4])].join("\n\n") },
-  { kind: "technology", content: [`# ${heading}：技术与维护`, "保留 Vue 3、TypeScript、Capacitor、.NET Framework / WinForms / WebView2 和已有 WebDAV 桥接。Windows 采集按需运行；手机不新增常驻模型和服务。", contentFor(modules[2]), contentFor(modules[5])].join("\n\n") },
+  { kind: "requirements", content: requirements },
+  { kind: "research", content: research },
+  { kind: "architecture", content: architecture },
+  { kind: "technology", content: technology },
 ];
+const exportIndex = process.argv.indexOf("--export-project-docs");
+if (exportIndex >= 0) {
+  const destination = process.argv[exportIndex + 1];
+  if (!destination || destination.startsWith("--") || apply || includeGitHub || evidenceIndex >= 0) {
+    throw new Error("Use --export-project-docs <dir> alone to export five project documents without connecting to ForgeFlow.");
+  }
+  const directory = resolve(root, destination);
+  await mkdir(directory, { recursive: true });
+  for (const { kind, content } of currentSpecs) {
+    await writeFile(join(directory, `${kind}.md`), `${content}\n`, { encoding: "utf8", flag: "wx" });
+  }
+  console.log(JSON.stringify({ mode: "export-project-docs", directory,
+    files: currentSpecs.map(({ kind, content }) => ({ name: `${kind}.md`, sha256: hash(`${content}\n`) })) }));
+  process.exit(0);
+}
 const documents = [{ key: "overview", title: heading, content: overview }, ...modules.map((item) => ({ key: item.code, title: `${item.code} ${item.name}（当前）`, content: contentFor(item) })), { key: "mobile-capture", title: "Android 直接采集（待真机验证）", content: mobileCaptureDesign }]
   .map((item) => ({ ...item, sourcePath: `salary://current/${item.key}`, originalFilename: `${item.key}.md`, contentType: "text/markdown" }));
 let github;
